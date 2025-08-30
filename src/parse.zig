@@ -175,6 +175,8 @@ const v1 = "";
 const v2 = "const x = 3;";
 const v3 = "const x = 45; var y = true; var z = 1.234; y = false; const a = \"abcd\";";
 
+const reassign = "const x = 3; x = 4;";
+
 const r1 = "x : 3;"; // no - syntax error
 const r2 = "x = 3;"; // no - assigned variable
 

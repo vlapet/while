@@ -7,7 +7,8 @@ const AstIn = Ast.Ast;
 const Parse = @import("parse.zig");
 
 const Self = @This();
-const var_map = std.AutoArrayHashMapUnmanaged([]const u8, u32);
+// const var_map = std.AutoArrayHashMapUnmanaged([]const u8, u32);
+const var_map = std.StringArrayHashMapUnmanaged(u32);
 
 const StackFrame = struct {
     vars: var_map,
@@ -37,13 +38,14 @@ fn gen_asm(self: *Self, ast: AstIn) !void {
         },
         .stmt => |s| switch (s) {
             .assign => |a| {
-                _ = try self.gen_asm_assign(a);
+                _ = try self.gen_asm_assign_or_reassign(Ast.AssignReassign{ .assign = a });
             },
-            // .reassign => |r| {
-            //     const loc = self.vars.getLast().vars.get(r.ident).?;
+            .reassign => |r| {
+                // const loc = self.vars.getLast().vars.get(r.ident) orelse return error.VarNotFoundInScope;
 
-            // },
-            else => return error.Undefined,
+                _ = try self.gen_asm_assign_or_reassign(Ast.AssignReassign{ .reassign = r });
+            },
+            // else => return error.Undefined,
         },
         else => return error.Unexpected,
     }
@@ -51,12 +53,22 @@ fn gen_asm(self: *Self, ast: AstIn) !void {
     // return error.Todo;
 }
 
-fn gen_asm_assign(self: *Self, assign: Ast.Assign) ![]const u8 {
+fn gen_asm_assign_or_reassign(self: *Self, ar: Ast.AssignReassign) ![]const u8 {
     // const ident = assign.@"var".ident;
     // const is_const = assign.@"var".is_const;
     // const curr_stack = &self.vars.getLast();
     const Res = struct { size: u32, str_len: usize };
     const curr_stack = &self.vars.items[self.vars.items.len - 1];
+
+    const assign = switch (ar) {
+        .assign => |a| a.assign,
+        .reassign => |r| r.assign,
+    };
+
+    const ident = switch (ar) {
+        .assign => |a| a.@"var".ident,
+        .reassign => |r| r.ident,
+    };
 
     // var buf: [100]u8 = std.mem.zeroes([100]u8);
     // const buf = try self.alloc.alloc(u8, 50);
@@ -64,7 +76,7 @@ fn gen_asm_assign(self: *Self, assign: Ast.Assign) ![]const u8 {
     std.log.debug("gen_asm_assign ptr before: {}\n", .{curr_stack.var_ptr});
 
     const res = asm_lbl: {
-        _ = switch (assign.assign) {
+        _ = switch (assign) {
             .expr => |e| {
                 _ = switch (e) {
                     // .val_bool => |_| undefined,
@@ -73,7 +85,12 @@ fn gen_asm_assign(self: *Self, assign: Ast.Assign) ![]const u8 {
                             bool => 8,
                             else => |t| @bitSizeOf(t),
                         };
-                        const ptr = curr_stack.*.var_ptr;
+                        // const ptr = if (var_addr) |v| v else curr_stack.*.var_ptr;
+
+                        const ptr = switch (ar) {
+                            .assign => curr_stack.*.var_ptr + size,
+                            .reassign => |r| self.vars.getLast().vars.get(r.ident) orelse return error.VarNotFoundInScope,
+                        };
 
                         const ptr_type_str = switch (@TypeOf(n)) {
                             u8, bool => "byte ptr",
@@ -81,12 +98,12 @@ fn gen_asm_assign(self: *Self, assign: Ast.Assign) ![]const u8 {
                             else => return error.Undefined,
                         };
 
-                        const s = try std.fmt.bufPrint(&self.buf, "mov {s} [rbp-{}], {}", .{ ptr_type_str, ptr + size, n });
+                        const s = try std.fmt.bufPrint(&self.buf, "mov {s} [rbp-{}], {}", .{ ptr_type_str, ptr, n });
                         break :asm_lbl Res{ .size = size, .str_len = s.len };
 
                         // break :asm_lbl Asm.mov ++ Asm.dword_ptr ++ "[" ++ Asm.rbp ++ "-" ++ ptr ++ "], " ++ n;
                     },
-                    else => undefined,
+                    else => return error.undefined,
                 };
                 // std.log.debug("{s}", .{asm_str});
             },
@@ -98,7 +115,13 @@ fn gen_asm_assign(self: *Self, assign: Ast.Assign) ![]const u8 {
     // try self.asm_str.appendSlice(self.alloc, asm_str);
 
     // std.log.debug("gen_asm_assign ptr mid: {}\n", .{curr_stack.var_ptr});
-    curr_stack.var_ptr += res.size;
+    switch (ar) {
+        .assign => {
+            curr_stack.var_ptr += res.size;
+            try curr_stack.vars.put(self.alloc, ident, curr_stack.var_ptr);
+        },
+        else => {},
+    }
     std.log.debug("gen_asm_assign ptr after: {}\n", .{curr_stack.var_ptr});
 
     std.log.info("gen_asm_assign: {s}\n", .{self.buf[0..res.str_len]});
@@ -145,7 +168,8 @@ const bool_str = "const x = false;";
 const bool_bool_str = "const x = false; const y = false;";
 const num_str = "const x = 3;";
 const multi_assign = "const x = 45; var y = true; var z = 1.234;";
-// const v3 = "const x = 45; var y = true; var z = 1.234; y = false; const a = \"abcd\";";
+const reassign = "const x = 45; x = 50;";
+const multi_assign_reassign = "const x = 45; var y = true; var z = 1.234; y = false; const a = \"abcd\";";
 
 test "compiler bool" {
     var memory = std.heap.DebugAllocator(.{}).init;
@@ -200,6 +224,32 @@ test "compiler multi_assign" {
 
     _ = try cmp.compile();
     std.log.info("finished compiler test multi_assign", .{});
+}
+
+test "compiler reassign" {
+    var memory = std.heap.DebugAllocator(.{}).init;
+    // defer _ = memory.deinit();
+    const alloc = memory.allocator();
+    // const alloc = std.testing.allocator;
+    var ctx = context.new_context(reassign);
+    var cmp = try new_compiler(alloc, &ctx);
+    defer cmp.deinit();
+
+    _ = try cmp.compile();
+    std.log.info("finished compiler test reassign", .{});
+}
+
+test "compiler multi_assign_reassign" {
+    var memory = std.heap.DebugAllocator(.{}).init;
+    // defer _ = memory.deinit();
+    const alloc = memory.allocator();
+    // const alloc = std.testing.allocator;
+    var ctx = context.new_context(multi_assign_reassign);
+    var cmp = try new_compiler(alloc, &ctx);
+    defer cmp.deinit();
+
+    _ = try cmp.compile();
+    std.log.info("finished compiler test multi_assign_reassign", .{});
 }
 
 // const AsmMap = std.StaticStringMap(Token).initComptime();

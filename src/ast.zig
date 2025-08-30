@@ -8,6 +8,11 @@ const Self = @This();
 //     params: []anytype,
 // };
 
+pub const AssignReassign = union(enum) {
+    assign: Assign,
+    reassign: ReAssign,
+};
+
 const field = struct {
     ident: []const u8,
     type: type,
