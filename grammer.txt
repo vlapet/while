@@ -1,0 +1,48 @@
+STATEMENTS              := STATEMENT; STATEMENTS | NONE
+STATEMENT               := ASSIGN
+                         | REASSIGN // same as assign but for mutating already defined 'var' variables
+                         | IF 
+                         | LOOP
+                         | BLOCK
+                         | RETURN
+
+EXPRESSION              := LITERAL
+                         | FUNCTION // I will allow `var x = FUNCTION` just because I can haha!
+                         | IF
+                        // | LOOP <- TBD
+                        // | SWITCH <- TBD
+                         | RETURN
+
+IF                      := if [| EXPRESSION | BLOCK |] BLOCK ELSE
+ELSE                    := BLOCK
+
+BLOCK                   := {  STATEMENTS  } // final expression returns
+                         | { STATEMENTS; BREAK EXPRESSION }
+
+CONSTDECL | VARDECL     := EXPRESSION // | BLOCK <- TBD
+
+FUNCTION                := fn LITERAL (...TBD) TYPE BLOCK
+
+RETURN                  := return [|NONE | EXPRESSION | BLOCK |]
+
+
+/*
+
+
+const a = EXPRESSION; // expressions resolve to some final value
+e.g.
+const b = 3;
+const c = if true 3 else 9;
+const d = if true {
+    const x = 9; 
+    9
+} else 7;
+
+// const e = while (c < 10) {} <- TBD
+const f = fn () { return 3; }; // no need for special lambda syntax
+
+const g = f(); // g = 3
+
+
+
+*/
