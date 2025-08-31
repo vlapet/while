@@ -22,6 +22,7 @@ ctx: *context,
 alloc: std.mem.Allocator,
 asm_str: std.ArrayListUnmanaged(u8),
 vars: var_stack,
+static_vars: var_map,
 buf: [50]u8,
 
 // main: ?*Ast., // TODO: TBD
@@ -30,27 +31,33 @@ buf: [50]u8,
 
 /// All the assembly is in self.ast_str
 fn gen_asm(self: *Self, ast: AstIn) !void {
-    switch (ast) {
-        .stmts => |s| {
-            _ = try gen_asm(self, AstIn{ .stmt = s.statement });
-            if (s.statements) |stmts|
-                _ = try gen_asm(self, AstIn{ .stmts = stmts.* });
-        },
-        .stmt => |s| switch (s) {
-            .assign => |a| {
-                _ = try self.gen_asm_assign_or_reassign(Ast.AssignReassign{ .assign = a });
-            },
-            .reassign => |r| {
-                // const loc = self.vars.getLast().vars.get(r.ident) orelse return error.VarNotFoundInScope;
+    try self.asm_str.appendSlice(self.alloc, "push rbp\n");
+    try self.asm_str.appendSlice(self.alloc, "mov rbp, rsp\n");
 
-                _ = try self.gen_asm_assign_or_reassign(Ast.AssignReassign{ .reassign = r });
-            },
-            // else => return error.Undefined,
-        },
-        else => return error.Unexpected,
+    switch (ast) {
+        .stmts => |s| try self.gen_asm_stmts(s),
+        else => unreachable,
     }
 
-    // return error.Todo;
+    try self.asm_str.appendSlice(self.alloc, "pop rbp\n");
+    try self.asm_str.appendSlice(self.alloc, "ret\n");
+}
+
+fn gen_asm_stmts(self: *Self, stmts: Ast.Statements) !void {
+    try gen_asm_stmt(self, stmts.statement);
+
+    if (stmts.statements) |s|
+        try gen_asm_stmts(self, s.*);
+}
+
+fn gen_asm_stmt(self: *Self, stmt: Ast.Statement) !void {
+    const str = switch (stmt) {
+        .assign => |a| try self.gen_asm_assign_or_reassign(Ast.AssignReassign{ .assign = a }),
+        .reassign => |r| try self.gen_asm_assign_or_reassign(Ast.AssignReassign{ .reassign = r }),
+
+        // else => return error.Undefined,
+    };
+    try self.asm_str.appendSlice(self.alloc, str);
 }
 
 fn gen_asm_assign_or_reassign(self: *Self, ar: Ast.AssignReassign) ![]const u8 {
@@ -80,9 +87,40 @@ fn gen_asm_assign_or_reassign(self: *Self, ar: Ast.AssignReassign) ![]const u8 {
             .expr => |e| {
                 _ = switch (e) {
                     // .val_bool => |_| undefined,
+                    .val_lit => {
+                        const size = 8;
+
+                        const loc = self.static_vars.get(e.val_lit) orelse s: {
+                            const len = self.static_vars.entries.len;
+
+                            const slc = try std.fmt.bufPrint(&self.buf, ".{}:\n\t.asciz \"{s}\"\n", .{ len, e.val_lit });
+                            try self.asm_str.insertSlice(
+                                self.alloc,
+                                0,
+                                slc,
+                            );
+
+                            break :s @as(u32, @intCast(len));
+                        };
+
+                        const ptr_type_str = "qword ptr";
+                        const ptr = switch (ar) {
+                            .assign => curr_stack.*.var_ptr + size,
+                            .reassign => |r| self.vars.getLast().vars.get(r.ident) orelse return error.VarNotFoundInScope,
+                        };
+
+                        const s = try std.fmt.bufPrint(&self.buf, "mov {s} [rbp-{}], offset .{}\n", .{
+                            ptr_type_str,
+                            ptr,
+                            loc,
+                        });
+
+                        break :asm_lbl Res{ .size = size, .str_len = s.len };
+                    },
                     inline .val_num, .val_bool, .val_char => |n| {
                         const size = switch (@TypeOf(n)) {
                             bool => 8,
+                            // []const u8 => 8 * @as(u32, @intCast(n.len)),
                             else => |t| @bitSizeOf(t),
                         };
                         // const ptr = if (var_addr) |v| v else curr_stack.*.var_ptr;
@@ -95,15 +133,17 @@ fn gen_asm_assign_or_reassign(self: *Self, ar: Ast.AssignReassign) ![]const u8 {
                         const ptr_type_str = switch (@TypeOf(n)) {
                             u8, bool => "byte ptr",
                             f64 => "qword ptr",
+                            // []const u8 => "qword ptr",
                             else => return error.Undefined,
                         };
 
-                        const s = try std.fmt.bufPrint(&self.buf, "mov {s} [rbp-{}], {}", .{ ptr_type_str, ptr, n });
+                        const s = try std.fmt.bufPrint(&self.buf, "mov {s} [rbp-{}], {}\n", .{ ptr_type_str, ptr, n });
+
                         break :asm_lbl Res{ .size = size, .str_len = s.len };
 
                         // break :asm_lbl Asm.mov ++ Asm.dword_ptr ++ "[" ++ Asm.rbp ++ "-" ++ ptr ++ "], " ++ n;
                     },
-                    else => return error.undefined,
+                    // else => return error.undefined,
                 };
                 // std.log.debug("{s}", .{asm_str});
             },
@@ -144,6 +184,7 @@ pub fn new_compiler(alloc: std.mem.Allocator, ctx: *context) !Self {
         // .vars = try std.ArrayListUnmanaged(StackFrame).initCapacity(alloc, 64),
         .vars = arr,
         .asm_str = try std.ArrayListUnmanaged(u8).initCapacity(alloc, 64),
+        .static_vars = var_map{},
         .buf = std.mem.zeroes([50]u8),
     };
 }
@@ -167,6 +208,7 @@ pub fn deinit(self: *Self) void {
 const bool_str = "const x = false;";
 const bool_bool_str = "const x = false; const y = false;";
 const num_str = "const x = 3;";
+const lit_str = "const x = \"abcd\";";
 const multi_assign = "const x = 45; var y = true; var z = 1.234;";
 const reassign = "const x = 45; x = 50;";
 const multi_assign_reassign = "const x = 45; var y = true; var z = 1.234; y = false; const a = \"abcd\";";
@@ -213,6 +255,21 @@ test "compiler num" {
     std.log.info("finished compiler test num", .{});
 }
 
+test "compiler lit" {
+    var memory = std.heap.DebugAllocator(.{}).init;
+    // defer _ = memory.deinit();
+    const alloc = memory.allocator();
+    // const alloc = std.testing.allocator;
+    var ctx = context.new_context(lit_str);
+    var cmp = try new_compiler(alloc, &ctx);
+    defer cmp.deinit();
+
+    try cmp.compile();
+
+    std.log.info("{s}", .{cmp.asm_str.items});
+    std.log.info("finished compiler test lit", .{});
+}
+
 test "compiler multi_assign" {
     var memory = std.heap.DebugAllocator(.{}).init;
     // defer _ = memory.deinit();
@@ -222,7 +279,9 @@ test "compiler multi_assign" {
     var cmp = try new_compiler(alloc, &ctx);
     defer cmp.deinit();
 
-    _ = try cmp.compile();
+    try cmp.compile();
+
+    std.log.info("{s}", .{cmp.asm_str.items});
     std.log.info("finished compiler test multi_assign", .{});
 }
 
@@ -249,6 +308,8 @@ test "compiler multi_assign_reassign" {
     defer cmp.deinit();
 
     _ = try cmp.compile();
+    std.log.info("{s}", .{cmp.asm_str.items});
+
     std.log.info("finished compiler test multi_assign_reassign", .{});
 }
 
@@ -302,4 +363,26 @@ const Asm = if (true) struct {
 //     );
 
 //     // asm (call malloc)
+// }
+
+// fn gen_asm(self: *Self, ast: AstIn) !void {
+//     switch (ast) {
+//         .stmts => |s| {
+//             _ = try gen_asm(self, AstIn{ .stmt = s.statement });
+//             if (s.statements) |stmts|
+//                 _ = try gen_asm(self, AstIn{ .stmts = stmts.* });
+//         },
+//         .stmt => |s| {
+//             const str = switch (s) {
+//                 .assign => |a| try self.gen_asm_assign_or_reassign(Ast.AssignReassign{ .assign = a }),
+//                 .reassign => |r| try self.gen_asm_assign_or_reassign(Ast.AssignReassign{ .reassign = r }),
+
+//                 // else => return error.Undefined,
+//             };
+//             try self.asm_str.appendSlice(self.alloc, str);
+//         },
+//         else => return error.Unexpected,
+//     }
+
+//     // return error.Todo;
 // }
