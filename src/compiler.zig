@@ -8,7 +8,13 @@ const Parse = @import("parse.zig");
 
 const Self = @This();
 // const var_map = std.AutoArrayHashMapUnmanaged([]const u8, u32);
-const var_map = std.StringArrayHashMapUnmanaged(u32);
+const var_info = struct {
+    ptr_addr: u32,
+    type: Ast.Expr,
+    is_const: bool,
+};
+// const var_map = std.StringArrayHashMapUnmanaged(u32); // Map to pointer address of vars in scope
+const var_map = std.StringArrayHashMapUnmanaged(var_info); // Map to pointer address of vars in scope
 
 const StackFrame = struct {
     vars: var_map,
@@ -27,7 +33,11 @@ buf: [50]u8,
 
 // main: ?*Ast., // TODO: TBD
 
-// pub fn eval_type(_: *Self, ast: AstIn) !type {} // use zig's underlying type system
+pub fn eval_type_expr(_: *Self, expr: Ast.Expr) !Ast.Expr {
+    return switch (expr) {
+        .val_bool, .val_char, .val_lit, .val_num => expr,
+    };
+}
 
 /// All the assembly is in self.ast_str
 fn gen_asm(self: *Self, ast: AstIn) !void {
@@ -77,9 +87,6 @@ fn gen_asm_assign_or_reassign(self: *Self, ar: Ast.AssignReassign) ![]const u8 {
         .reassign => |r| r.ident,
     };
 
-    // var buf: [100]u8 = std.mem.zeroes([100]u8);
-    // const buf = try self.alloc.alloc(u8, 50);
-
     std.log.debug("gen_asm_assign ptr before: {}\n", .{curr_stack.var_ptr});
 
     const res = asm_lbl: {
@@ -90,7 +97,7 @@ fn gen_asm_assign_or_reassign(self: *Self, ar: Ast.AssignReassign) ![]const u8 {
                     .val_lit => {
                         const size = 8;
 
-                        const loc = self.static_vars.get(e.val_lit) orelse s: {
+                        const loc = if (self.static_vars.get(e.val_lit)) |g| g.ptr_addr else s: {
                             const len = self.static_vars.entries.len;
 
                             const slc = try std.fmt.bufPrint(&self.buf, ".{}:\n\t.asciz \"{s}\"\n", .{ len, e.val_lit });
@@ -106,7 +113,7 @@ fn gen_asm_assign_or_reassign(self: *Self, ar: Ast.AssignReassign) ![]const u8 {
                         const ptr_type_str = "qword ptr";
                         const ptr = switch (ar) {
                             .assign => curr_stack.*.var_ptr + size,
-                            .reassign => |r| self.vars.getLast().vars.get(r.ident) orelse return error.VarNotFoundInScope,
+                            .reassign => |r| if (self.vars.getLast().vars.get(r.ident)) |g| g.ptr_addr else return error.VarNotFoundInScope,
                         };
 
                         const s = try std.fmt.bufPrint(&self.buf, "mov {s} [rbp-{}], offset .{}\n", .{
@@ -127,7 +134,7 @@ fn gen_asm_assign_or_reassign(self: *Self, ar: Ast.AssignReassign) ![]const u8 {
 
                         const ptr = switch (ar) {
                             .assign => curr_stack.*.var_ptr + size,
-                            .reassign => |r| self.vars.getLast().vars.get(r.ident) orelse return error.VarNotFoundInScope,
+                            .reassign => |r| if (self.vars.getLast().vars.get(r.ident)) |g| g.ptr_addr else return error.VarNotFoundInScope,
                         };
 
                         const ptr_type_str = switch (@TypeOf(n)) {
@@ -156,9 +163,11 @@ fn gen_asm_assign_or_reassign(self: *Self, ar: Ast.AssignReassign) ![]const u8 {
 
     // std.log.debug("gen_asm_assign ptr mid: {}\n", .{curr_stack.var_ptr});
     switch (ar) {
-        .assign => {
+        .assign => |a| {
             curr_stack.var_ptr += res.size;
-            try curr_stack.vars.put(self.alloc, ident, curr_stack.var_ptr);
+            const info = var_info{ .is_const = a.@"var".is_const, .ptr_addr = curr_stack.var_ptr, .type = a.assign.expr };
+            // try curr_stack.vars.put(self.alloc, ident, curr_stack.var_ptr);
+            try curr_stack.vars.put(self.alloc, ident, info);
         },
         else => {},
     }
