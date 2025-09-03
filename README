@@ -1,0 +1,17 @@
+Compile C to assembly (example)
+        clang -O2 -S hello.c -mllvm --x86-asm-syntax=intel -no-integrated-as -o hello_O2_clang.s
+(OR)    gcc -O2 -S hello.c -masm=intel -o hello_O2.s
+
+
+These can be compiled with `as` to machine code
+
+
+###
+
+I will use `nasm` syntax since this is cleaner (maybe)
+
+nasm -f elf32 -o hello.o hello.asm && ld -m elf_i386 -o hello hello.o
+
+    nasm -f elf64 -o hello.o hello.asm
+    gcc -s -o hello hello.o
+    ./hello 
