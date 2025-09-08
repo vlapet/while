@@ -306,6 +306,8 @@ const assign_block2 = "const x = { const y = 4; 3 };";
 const assign_nested = "const x = { { 3 } };";
 const assign_nested_seq = "const x = { {}; { 3 } };";
 
+const stmt_block_empty = "{};";
+
 const r1 = "x : 3;"; // no - syntax error
 const r2 = "x = 3;"; // no - assigned variable
 
@@ -371,6 +373,13 @@ test "parse assign_nested_seq" {
     );
 }
 
+test "parse stmt_block_empty" {
+    try parse_test_generic_str(
+        stmt_block_empty,
+        "stmt_block_empty",
+    );
+}
+
 inline fn parse_test_generic_str(test_str: []const u8, test_name: []const u8) !void {
     std.log.info("=> starting parse test: {s}\n", .{test_name});
     std.log.info("=> test str: {s}\n", .{test_str});
@@ -379,7 +388,7 @@ inline fn parse_test_generic_str(test_str: []const u8, test_name: []const u8) !v
     defer arena.deinit();
     const alloc = arena.allocator();
 
-    var ctx = Context.new_context(assign_nested_seq);
+    var ctx = Context.new_context(test_str);
     const ast = try parse_stmts(&ctx, alloc);
     // _ = ast;
     try Ast.print_ast(ast);
