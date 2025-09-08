@@ -54,6 +54,10 @@ pub fn parse_stmt(ctx: *Context, alloc: std.mem.Allocator) !Ast.Ast {
     std.log.debug("parse stmt\n", .{});
     const tok = try ctx.readToken();
 
+    return parse_stmt_paramed(ctx, alloc, tok);
+}
+
+pub fn parse_stmt_paramed(ctx: *Context, alloc: std.mem.Allocator, tok: Token) !Ast.Ast {
     return switch (tok) {
         .@"const" => parse_var(ctx, alloc, true),
         .@"var" => parse_var(ctx, alloc, false),
@@ -118,23 +122,142 @@ pub fn parse_var(ctx: *Context, alloc: std.mem.Allocator, is_const: bool) !Ast.A
 }
 
 pub fn parse_expression(ctx: *Context, alloc: std.mem.Allocator) !Ast.Ast {
-    _ = alloc;
+    // _ = alloc;
     const tok = try ctx.readToken();
 
+    return parse_expression_paramed(ctx, alloc, tok);
+}
+
+pub fn parse_expression_paramed(ctx: *Context, alloc: std.mem.Allocator, tok: Token) !Ast.Ast {
     return switch (tok) {
         .@"if" => unreachable,
         // .literal => |l| Ast.Ast{ .expr = .{ .val_lit = l } },
         .literal => error.UnexpectedLiteral,
-        .quoted_literal => |q| Ast.Ast{ .expr = .{ .val_lit = q } },
-        .number => |n| Ast.Ast{ .expr = .{ .val_num = n } },
-        .true => Ast.Ast{ .expr = .{ .val_bool = true } },
-        .false => Ast.Ast{ .expr = .{ .val_bool = false } },
+        .quoted_literal => |q| Ast.Ast{ .expr = .{ .basic_var = .{ .val_lit = q } } },
+        .number => |n| Ast.Ast{ .expr = .{ .basic_var = .{ .val_num = n } } },
+        .true => Ast.Ast{ .expr = .{ .basic_var = .{ .val_bool = true } } },
+        .false => Ast.Ast{ .expr = .{ .basic_var = .{ .val_bool = false } } },
         // .lbrace => unreachable,
         .function => unreachable,
         .@"return" => unreachable,
+        .lbrace => return try parse_block(ctx, alloc),
 
         else => unreachable,
     };
+}
+
+const blk_err = error{
+    OutOfBounds,
+    IncorrectNumberFormat,
+    TokenNotFound,
+    OutOfMemory,
+    UnexpectedLiteral,
+    ExpectedAssign,
+    ExpectedLit,
+};
+
+// const stmt_or_expr = union(enum) {
+//     stmt: Ast.Statement,
+//     expr: Ast.Expr,
+// };
+
+pub fn parse_block(ctx: *Context, alloc: std.mem.Allocator) blk_err!Ast.Ast {
+    const expr_or_stmt_tok = try ctx.readToken();
+    const res = switch (expr_or_stmt_tok) {
+        .@"const" => try parse_var(ctx, alloc, true),
+        .@"var" => try parse_var(ctx, alloc, true),
+        .number => |n| Ast.Ast{ .expr = .{
+            .basic_var = .{ .val_num = n },
+        } },
+        .lbrace => bk: {
+            const ast_blk = try parse_block(ctx, alloc);
+            break :bk Ast.Ast{ .expr = .{
+                .block = ast_blk.expr.block,
+            } };
+        },
+        .rbrace => { // block MUST be empty
+            return Ast.Ast{ .expr = .{
+                .block = .{
+                    .expr = null,
+                    .stmts = null,
+                },
+            } };
+        },
+
+        .true, .false => unreachable,
+        .@"if", .@"return", .@"while" => unreachable,
+        .semicolon => std.debug.panic("Semicolon is invalid here\n", .{}),
+        else => |e| std.debug.panic("UNREACHABLE IN BLOCK: {s}", .{@tagName(e)}),
+    };
+
+    const tok_end = try ctx.readToken();
+    const tok_end_stmt_check = try ctx.peekToken();
+
+    std.log.info("expr_or_stmt_tok: {s}\ttok_end: {s}\ttok_end_stmt_check: {s}\n", .{ @tagName(expr_or_stmt_tok), @tagName(tok_end), @tagName(tok_end_stmt_check) });
+
+    // Handle end of block
+    switch (tok_end) {
+        .rbrace => { // expr_or_stmt is expr
+            // std.debug.panic("comptime format: []const u8", .{});
+            const expr = try alloc.create(Ast.Expr);
+            expr.* = res.expr;
+            std.debug.print("TAGNAME: {s}\n", .{@tagName(res.expr)});
+            // @memcpy(expr[0..1], (&res.expr)[0..1]);
+            std.debug.print("TAGNAMEEXPR: {s}\n", .{@tagName(expr.*)});
+            // @unionInit(Ast.Expr, @tagName(res.expr), res.expr);
+            return Ast.Ast{ .expr = .{ .block = .{
+                .expr = expr,
+                .stmts = null,
+            } } };
+        },
+        .semicolon => {
+            switch (tok_end_stmt_check) {
+                .rbrace => { // expr_or_stmt is end stmt with no end expr
+                    _ = try ctx.readToken(); // discard rbrace
+                    const stmts = try alloc.create(Ast.Statements);
+                    const stmt = res.stmt;
+
+                    stmts.* = Ast.Statements{
+                        .statement = stmt,
+                        .statements = null,
+                    };
+
+                    return Ast.Ast{ .expr = .{ .block = .{
+                        .expr = null,
+                        .stmts = stmts,
+                    } } };
+                },
+                else => {},
+            }
+        },
+        .eof => unreachable,
+        else => {},
+    }
+
+    const block = try parse_block(ctx, alloc);
+
+    const stmts = try alloc.create(Ast.Statements);
+
+    // Here we will convert block expr to block stmt
+    // const stmt = res.stmt;
+    const stmt = switch (res) {
+        .stmt => |s| s,
+        .expr => |e| switch (e) {
+            .block => |b| Ast.Statement{ .block = b },
+            else => unreachable,
+        },
+        else => unreachable,
+    };
+
+    stmts.* = Ast.Statements{
+        .statement = stmt,
+        .statements = block.expr.block.stmts,
+    };
+
+    return Ast.Ast{ .expr = .{ .block = .{
+        .expr = block.expr.block.expr,
+        .stmts = stmts,
+    } } };
 }
 
 pub fn parse_function(ctx: *Context, alloc: std.mem.Allocator) !Ast.Ast {
@@ -177,117 +300,89 @@ const v3 = "const x = 45; var y = true; var z = 1.234; y = false; const a = \"ab
 
 const reassign = "const x = 3; x = 4;";
 
+const assign_block_empty = "const x = { };";
+const assign_block = "const x = { 3 };";
+const assign_block2 = "const x = { const y = 4; 3 };";
+const assign_nested = "const x = { { 3 } };";
+const assign_nested_seq = "const x = { {}; { 3 } };";
+
 const r1 = "x : 3;"; // no - syntax error
 const r2 = "x = 3;"; // no - assigned variable
 
-test "parse" {
-    var ctx = Context{
-        .pos = 0,
-        // .source = v1,
-        .source = v1[0..],
-    };
+test "parse v1" {
+    try parse_test_generic_str(
+        v1,
+        "v1",
+    );
+}
+
+test "parse v2" {
+    try parse_test_generic_str(
+        v2,
+        "v2",
+    );
+}
+test "parse v3" {
+    try parse_test_generic_str(
+        v3,
+        "v3",
+    );
+}
+
+test "parse reassign" {
+    try parse_test_generic_str(
+        reassign,
+        "reassign",
+    );
+}
+
+test "parse assign_block_empty" {
+    try parse_test_generic_str(
+        assign_block_empty,
+        "assign_block_empty",
+    );
+}
+
+test "parse assign_block" {
+    try parse_test_generic_str(
+        assign_block,
+        "assign_block",
+    );
+}
+
+test "parse assign_block2" {
+    try parse_test_generic_str(
+        assign_block2,
+        "assign_block2",
+    );
+}
+
+test "parse assign_nested" {
+    try parse_test_generic_str(
+        assign_nested,
+        "assign_nested",
+    );
+}
+
+test "parse assign_nested_seq" {
+    try parse_test_generic_str(
+        assign_nested_seq,
+        "assign_nested_seq",
+    );
+}
+
+inline fn parse_test_generic_str(test_str: []const u8, test_name: []const u8) !void {
+    std.log.info("=> starting parse test: {s}\n", .{test_name});
+    std.log.info("=> test str: {s}\n", .{test_str});
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const alloc = arena.allocator();
 
-    _ = try parse_stmts(&ctx, alloc);
-
-    ctx.source = v2[0..];
-    ctx.pos = 0;
-
+    var ctx = Context.new_context(assign_nested_seq);
     const ast = try parse_stmts(&ctx, alloc);
-    // const ast_check2 = Ast.Ast{
-    //     .assign = .{
-    //         .@"var" = .{
-    //             .ident = "x",
-    //             .is_const = true,
-    //         },
-    //         .expr = .{
-    //             .val_num = 3,
-    //         },
-    //     },
-    // };
-
-    // Ast.check_ast(
-    //     ast,
-    // );
-
+    // _ = ast;
     try Ast.print_ast(ast);
-    // try Ast.print_ast(ast_check2);
-    // try Ast.check_ast(ast_check2, ast);
 
-    ctx.reset(v3[0..]);
-
-    const ast2 = try parse_stmts(&ctx, alloc);
-    try Ast.print_ast(ast2);
-    std.debug.print("Parse tests completed successfully!\n", .{});
+    std.log.info("=> finished parse test: {s}\n", .{test_name});
 }
-
-// pub fn parse(ctx: *Context, alloc: std.mem.Allocator) !Ast.Ast {
-//     // _ = alloc;
-//     // This language is simple so first char must be an alphanum
-
-//     const t = try ctx.readToken();
-//     // std.debug.panic("f", .{});
-//     std.log.err("Parsing: {s}", .{@tagName(t)});
-
-//     return st: switch (t) {
-//         .quoted_literal => |l| {
-//             break :st Ast.Ast{ .exprs = .{
-//                 .expr = .{ .val_lit = l },
-//                 .exprs = null,
-//             } };
-//         },
-//         .literal => |l| // ZIG BUG: Need to remove discarded capture to compile in a labled switch
-//         {
-//             // const tok = try ctx.readToken();
-//             // try check_tok(tok, .assign);
-//             // continue :st tok;
-//             break :st Ast.Ast{ .exprs = .{
-//                 .expr = .{ .val_num = try std.fmt.parseFloat(f64, l) },
-//                 .exprs = null,
-//             } };
-//         },
-//         inline .@"const", Token.@"var" => |s, tag| {
-//             const is_const = if (tag == Token.@"const")
-//                 true
-//             else
-//                 false;
-//             _ = s;
-
-//             const var_lit = try ctx.readToken();
-//             try check_tok(var_lit, .{ .literal = "..." });
-
-//             const assign = try ctx.readToken();
-//             try check_tok(assign, .assign);
-
-//             // const expr = ctx.parse();
-//             const expr = try parse(ctx, alloc);
-//             const expr_res = switch (expr) {
-//                 .expr => |e| e,
-//                 else => |r| std.debug.panic("Unexpected result: {}", .{std.meta.activeTag(r)}),
-//             };
-
-//             break :st Ast.Ast{
-//                 .assign = .{
-//                     .@"var" = Ast.Var{
-//                         .ident = var_lit.literal,
-//                         .is_const = is_const,
-//                     },
-//                     .expr = expr_res,
-//                 },
-//             };
-//             // continue :st tok;
-//         },
-//         .@"if" => {
-//             @panic("unimpl");
-//         },
-//         .lparen => continue :st .assign,
-//         .semicolon => return .semicolon,
-//         .eof => return .eof,
-
-//         // else => continue :st token.Token.lparen,
-//         else => @panic("efgh"),
-//     };
-// }

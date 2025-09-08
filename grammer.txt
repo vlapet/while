@@ -12,6 +12,8 @@ EXPRESSION              := LITERAL
                         // | LOOP <- TBD
                         // | SWITCH <- TBD
                          | RETURN
+                         | BLOCK
+
 
 IF                      := if [| EXPRESSION | BLOCK |] BLOCK ELSE
 ELSE                    := BLOCK

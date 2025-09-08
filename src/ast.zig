@@ -8,6 +8,19 @@ const Self = @This();
 //     params: []anytype,
 // };
 
+pub const BasicType = union(enum) {
+    val_lit: []const u8, // TODO: rename to val_str
+    val_num: f64, // For now all numbers are f64
+    val_bool: bool, //u8, // Can only allocate 1 byte at a time
+    val_char: u8,
+    // val_misc: ANY, // this is to allow structs and custom data types
+};
+
+pub const Block = struct {
+    stmts: ?*Statements,
+    expr: ?*Expr,
+};
+
 pub const AssignReassign = union(enum) {
     assign: Assign,
     reassign: ReAssign,
@@ -29,7 +42,7 @@ pub const Var = struct {
 
 pub const AssignInner = union(enum) {
     expr: Expr,
-    // block: Block,
+    // block: Block, Move to Expr
 };
 
 const ReAssign = struct {
@@ -45,11 +58,11 @@ pub const Assign = struct {
 pub const Expr = union(enum) {
     // expr: Expr,
     //if: TODO!,
-    val_lit: []const u8, // TODO: rename to val_str
-    val_num: f64, // For now all numbers are f64
-    val_bool: bool, //u8, // Can only allocate 1 byte at a time
-    val_char: u8,
-    // val_misc: ANY, // this is to allow structs and custom data types
+    basic_var: BasicType,
+    block: Block,
+    // bin_op: BinOperation,
+    // uni_op: UniOperation,
+
     // @"var": []const u8,
 };
 
@@ -94,7 +107,7 @@ pub const Statement = union(enum) {
     reassign: ReAssign,
     //@"if": If
     // loop,
-    // Block
+    block: Block,
     // Return
 };
 
@@ -220,10 +233,21 @@ pub fn print_ast(ast: Ast) !void {
         },
         .expr => |e| {
             switch (e) {
-                .val_lit => |v| std.debug.print("val_lit: {s}\n", .{v}),
-                .val_num => |v| std.debug.print("val_num: {}\n", .{v}),
-                .val_bool => |v| std.debug.print("val_bool: {any}\n", .{v}),
-                .val_char => |v| std.debug.print("val_char: {c}\n", .{v}),
+                .basic_var => |b| {
+                    std.debug.print("basic_var:\t", .{});
+                    switch (b) {
+                        .val_lit => |v| std.debug.print("val_lit: {s}\n", .{v}),
+                        .val_num => |v| std.debug.print("val_num: {}\n", .{v}),
+                        .val_bool => |v| std.debug.print("val_bool: {any}\n", .{v}),
+                        .val_char => |v| std.debug.print("val_char: {c}\n", .{v}),
+                    }
+                },
+                .block => |b| {
+                    std.debug.print("BLOCK: \n", .{});
+                    if (b.stmts) |s| try print_ast(Ast{ .stmts = s.* }) else std.debug.print("stmts: NULL\n", .{});
+                    if (b.expr) |ex| try print_ast(Ast{ .expr = ex.* }) else std.debug.print("expr: NULL\n", .{});
+                    std.debug.print("ENDBLOCK: \n", .{});
+                },
             }
         },
         // .exprs => |e| {
@@ -255,6 +279,7 @@ pub fn print_ast(ast: Ast) !void {
                         .expr => |e| try print_ast(Ast{ .expr = e }),
                     }
                 },
+                .block => std.debug.print("BLOCK: \t", .{}),
                 // inline else => |i, t| try print_ast(@unionInit(Ast, @tagName(t), i)),
             }
         },
@@ -264,7 +289,7 @@ pub fn print_ast(ast: Ast) !void {
             if (s.statements) |s_i|
                 try print_ast(Ast{ .stmts = s_i.* })
             else
-                std.debug.print("NULL\n", .{});
+                std.debug.print("STMTSNULL\n", .{});
         },
     }
 }

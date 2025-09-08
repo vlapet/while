@@ -84,6 +84,7 @@ fn gen_asm_stmt(self: *Self, stmt: Ast.Statement) !void {
     const str = switch (stmt) {
         .assign => |a| try self.gen_asm_assign_or_reassign(Ast.AssignReassign{ .assign = a }),
         .reassign => |r| try self.gen_asm_assign_or_reassign(Ast.AssignReassign{ .reassign = r }),
+        .block => return error.Todo,
 
         // else => return error.Undefined,
     };
@@ -116,76 +117,84 @@ fn gen_asm_assign_or_reassign(self: *Self, ar: Ast.AssignReassign) ![]const u8 {
         _ = switch (assign) {
             .expr => |e| {
                 _ = switch (e) {
-                    .val_lit => {
-                        const size = 8;
+                    .basic_var => |b| {
+                        var ret_slc: []u8 = undefined;
+                        var size: u32 = undefined;
+                        switch (b) {
+                            .val_lit => |v| {
+                                size = 8;
 
-                        const loc = if (self.static_vars.get(e.val_lit)) |g| g.ptr_addr else s: {
-                            const len = self.static_vars.entries.len;
+                                const loc = if (self.static_vars.get(v)) |g| g.ptr_addr else s: {
+                                    const len = self.static_vars.entries.len;
 
-                            const slc = try std.fmt.bufPrint(&self.buf, "{s}.{s} db \'{s}\', 0", .{ scope, ident, e.val_lit });
-                            try self.data_queue_gen.appendSlice(self.alloc, slc);
+                                    const slc = try std.fmt.bufPrint(&self.buf, "{s}.{s} db \'{s}\', 0\n", .{ scope, ident, v });
+                                    try self.data_queue_gen.appendSlice(self.alloc, slc);
 
-                            break :s @as(u32, @intCast(len));
-                        };
-                        _ = loc;
+                                    break :s @as(u32, @intCast(len));
+                                };
+                                _ = loc;
 
-                        const ptr_type_str = qword_ptr;
-                        const ptr = switch (ar) {
-                            .assign => curr_stack.*.var_ptr + size,
-                            .reassign => |r| if (self.vars.getLast().vars.get(r.ident)) |g| g.ptr_addr else return error.VarNotFoundInScope,
-                        };
+                                const ptr_type_str = qword_ptr;
+                                const ptr = switch (ar) {
+                                    .assign => curr_stack.*.var_ptr + size,
+                                    .reassign => |r| if (self.vars.getLast().vars.get(r.ident)) |g| g.ptr_addr else return error.VarNotFoundInScope,
+                                };
 
-                        const s = try std.fmt.bufPrint(&self.buf, "mov {s} [rbp-{}], {s}.{s}\n", .{
-                            ptr_type_str,
-                            ptr,
-                            scope,
-                            ident,
-                        });
+                                ret_slc = try std.fmt.bufPrint(&self.buf, "mov {s} [rbp-{}], {s}.{s}\n", .{
+                                    ptr_type_str,
+                                    ptr,
+                                    scope,
+                                    ident,
+                                });
 
-                        break :asm_lbl Res{ .size = size, .str_len = s.len };
+                                // break :asm_lbl Res{ .size = size, .str_len = s.len };
+                            },
+                            .val_num => |n| {
+                                size = @bitSizeOf(f64);
+
+                                const ptr = switch (ar) {
+                                    .assign => curr_stack.*.var_ptr + size,
+                                    .reassign => |r| if (self.vars.getLast().vars.get(r.ident)) |g| g.ptr_addr else return error.VarNotFoundInScope,
+                                };
+
+                                // const ptr_type_str = qword_ptr;
+                                const param: u64 = @bitCast(n);
+
+                                ret_slc = try std.fmt.bufPrint(&self.buf,
+                                    \\mov rax, {d}
+                                    \\mov [rbp-{}], rax
+                                    \\
+                                , .{
+                                    param, ptr,
+                                });
+
+                                // break :asm_lbl Res{ .size = size, .str_len = s.len };
+                            },
+
+                            inline .val_bool, .val_char => |n| {
+                                size = 8;
+
+                                const ptr = switch (ar) {
+                                    .assign => curr_stack.*.var_ptr + size,
+                                    .reassign => |r| if (self.vars.getLast().vars.get(r.ident)) |g| g.ptr_addr else return error.VarNotFoundInScope,
+                                };
+
+                                const ptr_type_str = byte_ptr;
+
+                                const param: u64 = switch (@TypeOf(n)) {
+                                    bool => if (n == true) 1 else 0,
+                                    u8 => n,
+                                    else => return error.Undefined,
+                                };
+
+                                ret_slc = try std.fmt.bufPrint(&self.buf, "mov {s} [rbp-{}], {d}\n", .{ ptr_type_str, ptr, param });
+
+                                // break :asm_lbl Res{ .size = size, .str_len = s.len };
+                            },
+                        }
+                        break :asm_lbl Res{ .size = size, .str_len = ret_slc.len };
                     },
-                    .val_num => |n| {
-                        const size = @bitSizeOf(f64);
-
-                        const ptr = switch (ar) {
-                            .assign => curr_stack.*.var_ptr + size,
-                            .reassign => |r| if (self.vars.getLast().vars.get(r.ident)) |g| g.ptr_addr else return error.VarNotFoundInScope,
-                        };
-
-                        // const ptr_type_str = qword_ptr;
-                        const param: u64 = @bitCast(n);
-
-                        const s = try std.fmt.bufPrint(&self.buf,
-                            \\mov rax, {d}
-                            \\mov [rbp-{}], rax
-                            \\
-                        , .{
-                            param, ptr,
-                        });
-
-                        break :asm_lbl Res{ .size = size, .str_len = s.len };
-                    },
-
-                    inline .val_bool, .val_char => |n| {
-                        const size = 8;
-
-                        const ptr = switch (ar) {
-                            .assign => curr_stack.*.var_ptr + size,
-                            .reassign => |r| if (self.vars.getLast().vars.get(r.ident)) |g| g.ptr_addr else return error.VarNotFoundInScope,
-                        };
-
-                        const ptr_type_str = byte_ptr;
-
-                        const param: u64 = switch (@TypeOf(n)) {
-                            bool => if (n == true) 1 else 0,
-                            u8 => n,
-                            else => return error.Undefined,
-                        };
-
-                        const s = try std.fmt.bufPrint(&self.buf, "mov {s} [rbp-{}], {d}\n", .{ ptr_type_str, ptr, param });
-
-                        break :asm_lbl Res{ .size = size, .str_len = s.len };
-                    },
+                    .block => return error.Todo,
                 };
             },
         };
@@ -252,106 +261,97 @@ const bool_str = "const x = false;";
 const bool_bool_str = "const x = false; const y = false;";
 const num_str = "const x = 3;";
 const lit_str = "const x = \"abcd\";";
+const str_str = "const x = \"abcd\";const y = \"abcd\";";
 const multi_assign = "const x = 45; var y = true; var z = 1.234;";
 const reassign = "const x = 45; x = 50;";
 const multi_assign_reassign = "const x = 45; var y = true; var z = 1.234; y = false; const a = \"abcd\";";
 
+const assign_block_empty = "const x = { };";
+const assign_block = "const x = { 3 };";
+const assign_block2 = "const x = { const y = 4; 3 };";
+const assign_nested = "const x = { { 3 } };";
+const assign_nested_seq = "const x = { {}; { 3 } };";
+
 test "compiler bool" {
-    var memory = std.heap.DebugAllocator(.{}).init;
-    // defer _ = memory.deinit();
-    const alloc = memory.allocator();
-
-    var ctx = context.new_context(bool_str);
-
-    var cmp = try new_compiler(alloc, &ctx);
-    defer cmp.deinit();
-
-    _ = try cmp.compile();
-    std.log.info("{s}", .{cmp.asm_str.items});
-
-    std.log.info("finished compiler test bool", .{});
+    try compiler_test_generic_str(
+        bool_str,
+        "bool",
+    );
 }
 
 test "compiler bool_bool" {
-    var memory = std.heap.DebugAllocator(.{}).init;
-    // defer _ = memory.deinit();
-    const alloc = memory.allocator();
-
-    var ctx = context.new_context(bool_bool_str);
-
-    var cmp = try new_compiler(alloc, &ctx);
-    defer cmp.deinit();
-
-    _ = try cmp.compile();
-    std.log.info("{s}", .{cmp.asm_str.items});
-
-    std.log.info("finished compiler test 2", .{});
+    try compiler_test_generic_str(
+        bool_bool_str,
+        "bool_bool",
+    );
 }
 
 test "compiler num" {
-    var memory = std.heap.DebugAllocator(.{}).init;
-    // defer _ = memory.deinit();
-    const alloc = memory.allocator();
-    var ctx = context.new_context(num_str);
-    var cmp = try new_compiler(alloc, &ctx);
-    defer cmp.deinit();
-
-    _ = try cmp.compile();
-    std.log.info("{s}", .{cmp.asm_str.items});
-
-    std.log.info("finished compiler test num", .{});
+    try compiler_test_generic_str(
+        num_str,
+        "num",
+    );
 }
 
 test "compiler lit" {
-    var memory = std.heap.DebugAllocator(.{}).init;
-    // defer _ = memory.deinit();
-    const alloc = memory.allocator();
-    // const alloc = std.testing.allocator;
-    var ctx = context.new_context(lit_str);
-    var cmp = try new_compiler(alloc, &ctx);
-    defer cmp.deinit();
+    try compiler_test_generic_str(
+        lit_str,
+        "lit",
+    );
+}
 
-    try cmp.compile();
-    std.log.info("{s}", .{cmp.asm_str.items});
-
-    std.log.info("{s}", .{cmp.asm_str.items});
-    std.log.info("finished compiler test lit", .{});
+test "compiler str_str" {
+    try compiler_test_generic_str(
+        str_str,
+        "str_str",
+    );
 }
 
 test "compiler multi_assign" {
-    var memory = std.heap.DebugAllocator(.{}).init;
-    // defer _ = memory.deinit();
-    const alloc = memory.allocator();
-    // const alloc = std.testing.allocator;
-    var ctx = context.new_context(multi_assign);
-    var cmp = try new_compiler(alloc, &ctx);
-    defer cmp.deinit();
-
-    try cmp.compile();
-
-    std.log.info("{s}", .{cmp.asm_str.items});
-    std.log.info("finished compiler test multi_assign", .{});
+    try compiler_test_generic_str(
+        multi_assign,
+        "multi_assign",
+    );
 }
 
 test "compiler reassign" {
-    var memory = std.heap.DebugAllocator(.{}).init;
-    // defer _ = memory.deinit();
-    const alloc = memory.allocator();
-    // const alloc = std.testing.allocator;
-    var ctx = context.new_context(reassign);
-    var cmp = try new_compiler(alloc, &ctx);
-    defer cmp.deinit();
-
-    _ = try cmp.compile();
-    std.log.info("finished compiler test reassign", .{});
+    try compiler_test_generic_str(
+        reassign,
+        "reassign",
+    );
 }
 
 test "compiler multi_assign_reassign" {
+    try compiler_test_generic_str(
+        multi_assign_reassign,
+        "multi_assign_reassign",
+    );
+}
+
+test "compiler assign_block_empty" {
+    try compiler_test_generic_str(
+        assign_block_empty,
+        "assign_block_empty",
+    );
+}
+
+const section = "section";
+const dtext = ".text";
+const ddata = ".data";
+const global = "global";
+const qword_ptr = "qword"; // "qword ptr" in as
+const dword_ptr = "dword"; // "dword ptr" in as
+const byte_ptr = "byte"; // "dword ptr" in as
+
+fn compiler_test_generic_str(test_str: []const u8, test_name: []const u8) !void {
+    std.log.info("=> starting compiler test: {s}\n", .{test_name});
+    std.log.info("=> test str: {s}\n", .{test_str});
+
     var memory = std.heap.DebugAllocator(.{}).init;
     // defer _ = memory.deinit();
     const alloc = memory.allocator();
     // const alloc = std.testing.allocator;
-    var ctx = context.new_context(multi_assign_reassign);
+    var ctx = context.new_context(test_str);
     var cmp = try new_compiler(alloc, &ctx);
     defer cmp.deinit();
 
@@ -363,10 +363,24 @@ test "compiler multi_assign_reassign" {
     std.log.info("PATH: {s}\n\n\n\n", .{fpath});
 
     const f = try std.fs.cwd().createFile(fpath ++ ".asm", .{});
-    // defer std.fs.cwd().deleteFile(fpath) catch {};
+    defer std.fs.cwd().deleteFile(fpath) catch {};
+    defer std.fs.cwd().deleteFile(fpath ++ ".asm") catch {};
 
     try f.writeAll(cmp.asm_str.items);
-    var child = std.process.Child.init(&.{ "nasm", "-f", "elf64", "-o", fpath ++ ".o", fpath ++ ".asm" }, alloc);
+    try run(fpath, alloc);
+    std.log.info("=> finished compiler test: {s}\n", .{test_name});
+}
+
+fn run(fpath: []const u8, alloc: std.mem.Allocator) !void {
+    var buf1: [20]u8 = undefined;
+    var buf2: [20]u8 = undefined;
+    var buf3: [20]u8 = undefined;
+
+    const f_asm = try std.fmt.bufPrint(&buf1, "{s}.asm", .{fpath});
+    const f_o = try std.fmt.bufPrint(&buf2, "{s}.o", .{fpath});
+    const f_out = try std.fmt.bufPrint(&buf3, "./{s}", .{fpath});
+
+    var child = std.process.Child.init(&.{ "nasm", "-f", "elf64", "-o", f_o, f_asm }, alloc);
     var term = try child.spawnAndWait();
     switch (term) {
         .Exited => |e| if (e != 0) std.log.err("Err", .{}),
@@ -374,7 +388,7 @@ test "compiler multi_assign_reassign" {
         else => {},
     }
 
-    child = std.process.Child.init(&.{ "gcc", "-no-pie", "-s", "-o", fpath, fpath ++ ".o" }, alloc);
+    child = std.process.Child.init(&.{ "gcc", "-no-pie", "-s", "-o", fpath, f_o }, alloc);
     term = try child.spawnAndWait();
     switch (term) {
         .Exited => |e| if (e != 0) std.log.err("Err", .{}),
@@ -382,7 +396,7 @@ test "compiler multi_assign_reassign" {
         else => {},
     }
 
-    child = std.process.Child.init(&.{"./" ++ fpath}, alloc);
+    child = std.process.Child.init(&.{f_out}, alloc);
     term = try child.spawnAndWait();
     switch (term) {
         .Exited => |e| if (e != 0) std.log.err("Err", .{}),
@@ -391,17 +405,7 @@ test "compiler multi_assign_reassign" {
     }
 
     // try std.process.Child.init(&.{ "gcc -s -o", abs_path, abs_path, ".o" }, alloc).wait();
-
-    std.log.info("finished compiler test multi_assign_reassign", .{});
 }
-
-const section = "section";
-const dtext = ".text";
-const ddata = ".data";
-const global = "global";
-const qword_ptr = "qword"; // "qword ptr" in as
-const dword_ptr = "dword"; // "dword ptr" in as
-const byte_ptr = "byte"; // "dword ptr" in as
 
 // const AsmMap = std.StaticStringMap(Token).initComptime();
 
@@ -428,10 +432,6 @@ const byte_ptr = "byte"; // "dword ptr" in as
 //     rex_prefix = 0x48,
 // };
 
-// fn gen_asm_assign(_: *Self, assign: Ast.Assign) void {
-//     _ = assign;
-// }
-
 // fn gen_asm_add(_: *Self, add: Ast.BinOperation) !void {
 //     const l = add.lhs;
 //     const r = add.rhs;
@@ -453,26 +453,4 @@ const byte_ptr = "byte"; // "dword ptr" in as
 //     );
 
 //     // asm (call malloc)
-// }
-
-// fn gen_asm(self: *Self, ast: AstIn) !void {
-//     switch (ast) {
-//         .stmts => |s| {
-//             _ = try gen_asm(self, AstIn{ .stmt = s.statement });
-//             if (s.statements) |stmts|
-//                 _ = try gen_asm(self, AstIn{ .stmts = stmts.* });
-//         },
-//         .stmt => |s| {
-//             const str = switch (s) {
-//                 .assign => |a| try self.gen_asm_assign_or_reassign(Ast.AssignReassign{ .assign = a }),
-//                 .reassign => |r| try self.gen_asm_assign_or_reassign(Ast.AssignReassign{ .reassign = r }),
-
-//                 // else => return error.Undefined,
-//             };
-//             try self.asm_str.appendSlice(self.alloc, str);
-//         },
-//         else => return error.Unexpected,
-//     }
-
-//     // return error.Todo;
 // }
