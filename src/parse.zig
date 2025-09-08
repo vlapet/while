@@ -81,6 +81,10 @@ pub fn parse_stmt_paramed(ctx: *Context, alloc: std.mem.Allocator, tok: Token) !
                 },
             };
         },
+        .lbrace => blk: {
+            const b_ast = try parse_block(ctx, alloc);
+            break :blk Ast.Ast{ .stmt = .{ .block = b_ast.expr.block } };
+        },
         else => |e| {
             std.log.err("UNREACHABLE! Token: {any}\n", .{e});
 
