@@ -8,17 +8,17 @@ const Parse = @import("parse.zig");
 
 const Self = @This();
 // const var_map = std.AutoArrayHashMapUnmanaged([]const u8, u32);
-const var_info = struct {
+const VarInfo = struct {
     ptr_addr: u32,
-    type: Ast.Expr,
+    type: Ast.VarType,
     is_const: bool,
 };
 // const var_map = std.StringArrayHashMapUnmanaged(u32); // Map to pointer address of vars in scope
-const VarMap = std.StringArrayHashMapUnmanaged(var_info); // Map to pointer address of vars in scope
+const VarMap = std.StringArrayHashMapUnmanaged(VarInfo); // Map to pointer address of vars in scope
 const HeapStr = std.ArrayListUnmanaged(u8);
 
 const StackFrame = struct {
-    vars: VarMap,
+    vars: VarMap = VarMap{},
     var_ptr: u32 = 0,
 };
 
@@ -37,9 +37,25 @@ fn_queue_gen: HeapStr, // generate function assembly block
 
 // main: ?*Ast., // TODO: TBD
 
-pub fn eval_type_expr(_: *Self, expr: Ast.Expr) !Ast.Expr {
+pub fn eval_type_expr(self: *Self, expr: Ast.Expr) !Ast.VarType {
     return switch (expr) {
-        .val_bool, .val_char, .val_lit, .val_num => expr,
+        .basic_var => |b| switch (b) {
+            inline .val_bool,
+            .val_char,
+            .val_lit,
+            .val_num,
+            .val_void,
+            => expr.basic_var,
+            // else => @panic("message: []const u8"),
+        },
+        .block => |b| {
+            // _ = b;
+            if (b.expr) |e| {
+                return try self.eval_type_expr(e.*);
+            } else {
+                return .val_void;
+            }
+        },
     };
 }
 
@@ -91,7 +107,7 @@ fn gen_asm_stmt(self: *Self, stmt: Ast.Statement) !void {
     try self.asm_str.appendSlice(self.alloc, str);
 }
 
-fn gen_asm_assign_or_reassign(self: *Self, ar: Ast.AssignReassign) ![]const u8 {
+fn gen_asm_assign_or_reassign(self: *Self, ar: Ast.AssignReassign) anyerror![]const u8 {
     // const is_const = assign.@"var".is_const;
     // const curr_stack = &self.vars.getLast();
     const Res = struct { size: u32, str_len: usize };
@@ -115,87 +131,138 @@ fn gen_asm_assign_or_reassign(self: *Self, ar: Ast.AssignReassign) ![]const u8 {
 
     const res = asm_lbl: {
         _ = switch (assign) {
-            .expr => |e| {
-                _ = switch (e) {
-                    .basic_var => |b| {
-                        var ret_slc: []u8 = undefined;
-                        var size: u32 = undefined;
-                        switch (b) {
-                            .val_lit => |v| {
-                                size = 8;
+            .basic_var => |b| {
+                var ret_slc: []u8 = undefined;
+                var size: u32 = undefined;
+                switch (b) {
+                    .val_lit => |v| {
+                        size = 8;
 
-                                const loc = if (self.static_vars.get(v)) |g| g.ptr_addr else s: {
-                                    const len = self.static_vars.entries.len;
+                        const loc = if (self.static_vars.get(v)) |g| g.ptr_addr else s: {
+                            const len = self.static_vars.entries.len;
 
-                                    const slc = try std.fmt.bufPrint(&self.buf, "{s}.{s} db \'{s}\', 0\n", .{ scope, ident, v });
-                                    try self.data_queue_gen.appendSlice(self.alloc, slc);
+                            const slc = try std.fmt.bufPrint(&self.buf, "{s}.{s} db \'{s}\', 0\n", .{ scope, ident, v });
+                            try self.data_queue_gen.appendSlice(self.alloc, slc);
 
-                                    break :s @as(u32, @intCast(len));
-                                };
-                                _ = loc;
+                            break :s @as(u32, @intCast(len));
+                        };
+                        _ = loc;
 
-                                const ptr_type_str = qword_ptr;
-                                const ptr = switch (ar) {
-                                    .assign => curr_stack.*.var_ptr + size,
-                                    .reassign => |r| if (self.vars.getLast().vars.get(r.ident)) |g| g.ptr_addr else return error.VarNotFoundInScope,
-                                };
+                        const ptr_type_str = qword_ptr;
+                        const ptr = switch (ar) {
+                            .assign => curr_stack.*.var_ptr + size,
+                            .reassign => |r| if (self.vars.getLast().vars.get(r.ident)) |g| g.ptr_addr else return error.VarNotFoundInScope,
+                        };
 
-                                ret_slc = try std.fmt.bufPrint(&self.buf, "mov {s} [rbp-{}], {s}.{s}\n", .{
-                                    ptr_type_str,
-                                    ptr,
-                                    scope,
-                                    ident,
-                                });
+                        ret_slc = try std.fmt.bufPrint(&self.buf, "mov {s} [rbp-{}], {s}.{s}\n", .{
+                            ptr_type_str,
+                            ptr,
+                            scope,
+                            ident,
+                        });
 
-                                // break :asm_lbl Res{ .size = size, .str_len = s.len };
-                            },
-                            .val_num => |n| {
-                                size = @bitSizeOf(f64);
-
-                                const ptr = switch (ar) {
-                                    .assign => curr_stack.*.var_ptr + size,
-                                    .reassign => |r| if (self.vars.getLast().vars.get(r.ident)) |g| g.ptr_addr else return error.VarNotFoundInScope,
-                                };
-
-                                // const ptr_type_str = qword_ptr;
-                                const param: u64 = @bitCast(n);
-
-                                ret_slc = try std.fmt.bufPrint(&self.buf,
-                                    \\mov rax, {d}
-                                    \\mov [rbp-{}], rax
-                                    \\
-                                , .{
-                                    param, ptr,
-                                });
-
-                                // break :asm_lbl Res{ .size = size, .str_len = s.len };
-                            },
-
-                            inline .val_bool, .val_char => |n| {
-                                size = 8;
-
-                                const ptr = switch (ar) {
-                                    .assign => curr_stack.*.var_ptr + size,
-                                    .reassign => |r| if (self.vars.getLast().vars.get(r.ident)) |g| g.ptr_addr else return error.VarNotFoundInScope,
-                                };
-
-                                const ptr_type_str = byte_ptr;
-
-                                const param: u64 = switch (@TypeOf(n)) {
-                                    bool => if (n == true) 1 else 0,
-                                    u8 => n,
-                                    else => return error.Undefined,
-                                };
-
-                                ret_slc = try std.fmt.bufPrint(&self.buf, "mov {s} [rbp-{}], {d}\n", .{ ptr_type_str, ptr, param });
-
-                                // break :asm_lbl Res{ .size = size, .str_len = s.len };
-                            },
-                        }
-                        break :asm_lbl Res{ .size = size, .str_len = ret_slc.len };
+                        // break :asm_lbl Res{ .size = size, .str_len = s.len };
                     },
-                    .block => return error.Todo,
+                    .val_num => |n| {
+                        size = @bitSizeOf(f64);
+
+                        const ptr = switch (ar) {
+                            .assign => curr_stack.*.var_ptr + size,
+                            .reassign => |r| if (self.vars.getLast().vars.get(r.ident)) |g| g.ptr_addr else return error.VarNotFoundInScope,
+                        };
+
+                        // const ptr_type_str = qword_ptr;
+                        const param: u64 = @bitCast(n);
+
+                        ret_slc = try std.fmt.bufPrint(&self.buf,
+                            \\mov rax, {d}
+                            \\mov [rbp-{}], rax
+                            \\
+                        , .{
+                            param, ptr,
+                        });
+
+                        // break :asm_lbl Res{ .size = size, .str_len = s.len };
+                    },
+
+                    inline .val_bool, .val_char => |n| {
+                        size = 8;
+
+                        const ptr = switch (ar) {
+                            .assign => curr_stack.*.var_ptr + size,
+                            .reassign => |r| if (self.vars.getLast().vars.get(r.ident)) |g| g.ptr_addr else return error.VarNotFoundInScope,
+                        };
+
+                        const ptr_type_str = byte_ptr;
+
+                        const param: u64 = switch (@TypeOf(n)) {
+                            bool => if (n == true) 1 else 0,
+                            u8 => n,
+                            else => return error.Undefined,
+                        };
+
+                        ret_slc = try std.fmt.bufPrint(&self.buf, "mov {s} [rbp-{}], {d}\n", .{ ptr_type_str, ptr, param });
+
+                        // break :asm_lbl Res{ .size = size, .str_len = s.len };
+                    },
+                    else => std.debug.panic("Unimplemented\n", .{}),
+                }
+                break :asm_lbl Res{ .size = size, .str_len = ret_slc.len };
+            },
+            .block => |b| {
+                // assign nothing
+                std.log.warn("EMPTY BLOCK SHOULD BE TYPE VOID!\n", .{});
+                if (b.stmts == null and b.expr == null) {
+                    break :asm_lbl Res{ .size = 0, .str_len = 0 };
+                }
+
+                var str = HeapStr{};
+
+                if (b.stmts) |stmts| {
+                    std.log.info("generating asm for block stmts\n", .{});
+                    try self.vars.append(self.alloc, StackFrame{ .var_ptr = curr_stack.var_ptr }); // Inner scope visible to compiler only
+
+                    try self.gen_asm_stmts(stmts.*);
+
+                    const sf: StackFrame = self.vars.pop().?;
+                    curr_stack.*.var_ptr = sf.var_ptr;
+                }
+
+                _ = if (b.expr) |expr| {
+                    std.log.info("generating asm for block stmts\n", .{});
+                    switch (expr.*) {
+                        .basic_var => |v| {
+                            const a = switch (ar) {
+                                .assign => |as| Ast.AssignReassign{
+                                    // .assign = .{ .@"var" = as.@"var", .assign = .{
+                                    //     .expr = .{ .basic_var = v },
+                                    // } },
+                                    .assign = .{ .@"var" = as.@"var", .assign = .{ .basic_var = v } },
+                                },
+                                .reassign => |rs| Ast.AssignReassign{
+                                    // .reassign = .{ .ident = rs.ident, .assign = .{
+                                    //     .expr = .{ .basic_var = v },
+                                    // } },
+                                    .reassign = .{ .ident = rs.ident, .assign = .{ .basic_var = v } },
+                                },
+                            };
+                            const slc = try self.gen_asm_assign_or_reassign(a);
+                            std.debug.print("WARNING: FINISH BLOCK\n", .{});
+
+                            // return slc;
+                            try str.appendSlice(self.alloc, slc);
+                        },
+                        .block => std.debug.panic("unimplemented\n", .{}),
+                    }
                 };
+
+                if (b.stmts) |_| {
+                    // try str.appendSlice(self.alloc, "ret\n");
+                }
+
+                return str.items;
+
+                // return error.Todo;
             },
         };
 
@@ -208,7 +275,15 @@ fn gen_asm_assign_or_reassign(self: *Self, ar: Ast.AssignReassign) ![]const u8 {
     switch (ar) {
         .assign => |a| {
             curr_stack.var_ptr += res.size;
-            const info = var_info{ .is_const = a.@"var".is_const, .ptr_addr = curr_stack.var_ptr, .type = a.assign.expr };
+            // const a_type = try self.eval_type_expr(a.assign.expr);
+            const a_type = try self.eval_type_expr(a.assign);
+
+            // const info = var_info{ .is_const = a.@"var".is_const, .ptr_addr = curr_stack.var_ptr, .type = a.assign.expr };
+            const info = VarInfo{
+                .is_const = a.@"var".is_const,
+                .ptr_addr = curr_stack.var_ptr,
+                .type = a_type,
+            };
             // try curr_stack.vars.put(self.alloc, ident, curr_stack.var_ptr);
             try curr_stack.vars.put(self.alloc, ident, info);
         },
@@ -335,6 +410,20 @@ test "compiler assign_block_empty" {
     );
 }
 
+test "compiler assign_block" {
+    try compiler_test_generic_str(
+        assign_block,
+        "assign_block",
+    );
+}
+
+test "compiler assign_block2" {
+    try compiler_test_generic_str(
+        assign_block2,
+        "assign_block2",
+    );
+}
+
 const section = "section";
 const dtext = ".text";
 const ddata = ".data";
@@ -383,8 +472,8 @@ fn run(fpath: []const u8, alloc: std.mem.Allocator) !void {
     var child = std.process.Child.init(&.{ "nasm", "-f", "elf64", "-o", f_o, f_asm }, alloc);
     var term = try child.spawnAndWait();
     switch (term) {
-        .Exited => |e| if (e != 0) std.log.err("Err", .{}),
-        .Signal => std.log.err("Err", .{}),
+        .Exited => |e| if (e != 0) std.log.err("nasm exit err\n", .{}),
+        .Signal => std.log.err("nasm sig err\n", .{}),
         else => {},
     }
 
@@ -399,8 +488,8 @@ fn run(fpath: []const u8, alloc: std.mem.Allocator) !void {
     child = std.process.Child.init(&.{f_out}, alloc);
     term = try child.spawnAndWait();
     switch (term) {
-        .Exited => |e| if (e != 0) std.log.err("Err", .{}),
-        .Signal => std.log.err("Err", .{}),
+        .Exited => |e| if (e != 0) std.log.err("prog exit err\n", .{}),
+        .Signal => std.log.err("prog sig err\n", .{}),
         else => {},
     }
 

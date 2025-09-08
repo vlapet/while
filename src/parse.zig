@@ -76,7 +76,8 @@ pub fn parse_stmt_paramed(ctx: *Context, alloc: std.mem.Allocator, tok: Token) !
                 .stmt = .{
                     .reassign = .{
                         .ident = lit,
-                        .assign = .{ .expr = expr.expr },
+                        // .assign = .{ .expr = expr.expr },
+                        .assign = expr.expr,
                     },
                 },
             };
@@ -117,7 +118,8 @@ pub fn parse_var(ctx: *Context, alloc: std.mem.Allocator, is_const: bool) !Ast.A
             .assign = .{
                 .@"var" = .{ .ident = lit.literal, .is_const = is_const },
                 .assign = switch (assign) {
-                    .expr => |e| .{ .expr = e },
+                    // .expr => |e| .{ .expr = e },
+                    .expr => |e| e,
                     else => unreachable,
                 },
             },

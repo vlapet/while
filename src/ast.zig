@@ -3,17 +3,28 @@ const context = @import("context.zig");
 
 const Self = @This();
 
-// pub const function = struct {
+// pub const FnHead = struct {
 //     ident: []const u8,
 //     params: []anytype,
 // };
 
-pub const BasicType = union(enum) {
+// pub const function = struct {
+//     head: FnHead,
+//     body: Block,
+// };
+
+// pub const Type = union(enum) {};
+
+pub const VarType = union(enum) {
     val_lit: []const u8, // TODO: rename to val_str
     val_num: f64, // For now all numbers are f64
     val_bool: bool, //u8, // Can only allocate 1 byte at a time
     val_char: u8,
+    val_void: void,
+    // val_type: usize,
+    // val_ptr:
     // val_misc: ANY, // this is to allow structs and custom data types
+    // function: FnHead,
 };
 
 pub const Block = struct {
@@ -40,25 +51,20 @@ pub const Var = struct {
     ident: []const u8,
 };
 
-pub const AssignInner = union(enum) {
-    expr: Expr,
-    // block: Block, Move to Expr
-};
-
 const ReAssign = struct {
     ident: []const u8,
-    assign: AssignInner,
+    assign: Expr,
 };
 
 pub const Assign = struct {
     @"var": Var,
-    assign: AssignInner,
+    assign: Expr,
 };
 
 pub const Expr = union(enum) {
     // expr: Expr,
     //if: TODO!,
-    basic_var: BasicType,
+    basic_var: VarType,
     block: Block,
     // bin_op: BinOperation,
     // uni_op: UniOperation,
@@ -240,6 +246,7 @@ pub fn print_ast(ast: Ast) !void {
                         .val_num => |v| std.debug.print("val_num: {}\n", .{v}),
                         .val_bool => |v| std.debug.print("val_bool: {any}\n", .{v}),
                         .val_char => |v| std.debug.print("val_char: {c}\n", .{v}),
+                        .val_void => std.debug.print("val_void\n", .{}),
                     }
                 },
                 .block => |b| {
@@ -268,16 +275,18 @@ pub fn print_ast(ast: Ast) !void {
                     std.debug.print("assign ->", .{});
                     try print_ast(Ast{ .@"var" = a.@"var" });
                     // try print_ast(Ast{ .expr = a.expr });
-                    switch (a.assign) {
-                        .expr => |e| try print_ast(Ast{ .expr = e }),
-                    }
+                    // switch (a.assign) {
+                    //     .expr => |e| try print_ast(Ast{ .expr = e }),
+                    // }
+                    try print_ast(Ast{ .expr = a.assign });
                 },
                 .reassign => |r| {
                     std.debug.print("reassign -> ident -> {s}\t", .{r.ident});
                     // try print_ast(Ast{ .expr = a.expr });
-                    switch (r.assign) {
-                        .expr => |e| try print_ast(Ast{ .expr = e }),
-                    }
+                    // switch (r.assign) {
+                    //     .expr => |e| try print_ast(Ast{ .expr = e }),
+                    // }
+                    try print_ast(Ast{ .expr = r.assign });
                 },
                 .block => std.debug.print("BLOCK: \t", .{}),
                 // inline else => |i, t| try print_ast(@unionInit(Ast, @tagName(t), i)),
