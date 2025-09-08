@@ -91,7 +91,10 @@ fn gen_asm_stmt(self: *Self, stmt: Ast.Statement) !void {
     try self.asm_str.appendSlice(self.alloc, str);
 }
 
-fn gen_asm_assign_or_reassign(self: *Self, ar: Ast.AssignReassign) ![]const u8 {
+const asm_error = error{};
+
+// fn gen_asm_assign_or_reassign(self: *Self, ar: Ast.AssignReassign) std.mem.Allocator.Error!std.fmt.BufPrintError!asm_error![]const u8 {
+fn gen_asm_assign_or_reassign(self: *Self, ar: Ast.AssignReassign) anyerror![]const u8 {
     // const is_const = assign.@"var".is_const;
     // const curr_stack = &self.vars.getLast();
     const Res = struct { size: u32, str_len: usize };
@@ -194,7 +197,15 @@ fn gen_asm_assign_or_reassign(self: *Self, ar: Ast.AssignReassign) ![]const u8 {
                         }
                         break :asm_lbl Res{ .size = size, .str_len = ret_slc.len };
                     },
-                    .block => return error.Todo,
+                    .block => |b| {
+                        if (b.stmts) |stmts|
+                            try self.gen_asm_stmts(stmts.*);
+
+                        if (b.expr) |_|
+                            return error.ToDo;
+
+                        return error.Todo;
+                    },
                 };
             },
         };
