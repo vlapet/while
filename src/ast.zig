@@ -5,8 +5,13 @@ const Self = @This();
 
 // pub const FnHead = struct {
 //     ident: []const u8,
-//     params: []anytype,
+//     params: []SysType,
 // };
+
+pub const FnType = struct {
+    params: []SysType,
+    ret_type: []SysType,
+};
 
 // pub const function = struct {
 //     head: FnHead,
@@ -14,6 +19,16 @@ const Self = @This();
 // };
 
 // pub const Type = union(enum) {};
+
+pub const SysType = union(enum) {
+    Void: void,
+    // Int: u8, // tbd
+    Float: u8, // size tbd
+    Char: void, // this is u8 but we will differentiate
+    // String: void, // tbd: do we want to support this explicitly?
+    Null: void,
+    Function: FnType,
+};
 
 pub const VarType = union(enum) {
     val_lit: []const u8, // TODO: rename to val_str
@@ -30,6 +45,12 @@ pub const VarType = union(enum) {
 pub const Block = struct {
     stmts: ?*Statements,
     expr: ?*Expr,
+};
+
+pub const If = struct {
+    cond_expr: *Expr,
+    if_expr: *Expr,
+    else_expr: ?*Expr,
 };
 
 pub const AssignReassign = union(enum) {
@@ -66,6 +87,7 @@ pub const Expr = union(enum) {
     //if: TODO!,
     basic_var: VarType,
     block: Block,
+    @"if": If,
     // bin_op: BinOperation,
     // uni_op: UniOperation,
 
@@ -111,7 +133,7 @@ const BinOpTag = enum {
 pub const Statement = union(enum) {
     assign: Assign,
     reassign: ReAssign,
-    //@"if": If
+    @"if": If,
     // loop,
     block: Block,
     // Return
@@ -255,6 +277,16 @@ pub fn print_ast(ast: Ast) !void {
                     if (b.expr) |ex| try print_ast(Ast{ .expr = ex.* }) else std.debug.print("expr: NULL\n", .{});
                     std.debug.print("ENDBLOCK: \n", .{});
                 },
+                .@"if" => |i| {
+                    std.debug.print("IF: \n", .{});
+                    std.debug.print("COND: \t", .{});
+                    try print_ast(Ast{ .expr = i.cond_expr.* });
+                    std.debug.print("IF_BRANCH: \t", .{});
+                    try print_ast(Ast{ .expr = i.if_expr.* });
+                    std.debug.print("ELSE_BRANCH: \t", .{});
+                    if (i.else_expr) |ex| try print_ast(Ast{ .expr = ex.* }) else std.debug.print("expr: NULL\n", .{});
+                    std.debug.print("ENDIF: \n", .{});
+                },
             }
         },
         // .exprs => |e| {
@@ -288,7 +320,25 @@ pub fn print_ast(ast: Ast) !void {
                     // }
                     try print_ast(Ast{ .expr = r.assign });
                 },
-                .block => std.debug.print("BLOCK: \t", .{}),
+                // .block => std.debug.print("BLOCK: \t", .{}),
+                // .@"if" => std.debug.print("IF: \t", .{}),
+                .block => |b| {
+                    std.debug.print("BLOCK: \n", .{});
+                    if (b.stmts) |st| try print_ast(Ast{ .stmts = st.* }) else std.debug.print("stmts: NULL\n", .{});
+                    if (b.expr) |ex| try print_ast(Ast{ .expr = ex.* }) else std.debug.print("expr: NULL\n", .{});
+                    std.debug.print("ENDBLOCK: \n", .{});
+                },
+                .@"if" => |i| {
+                    std.debug.print("IF: \n", .{});
+                    std.debug.print("COND: \t", .{});
+                    try print_ast(Ast{ .expr = i.cond_expr.* });
+                    std.debug.print("IF_BRANCH: \t", .{});
+                    try print_ast(Ast{ .expr = i.if_expr.* });
+                    std.debug.print("ELSE_BRANCH: \t", .{});
+                    if (i.else_expr) |ex| try print_ast(Ast{ .expr = ex.* }) else std.debug.print("expr: NULL\n", .{});
+                    std.debug.print("ENDIF: \n", .{});
+                },
+
                 // inline else => |i, t| try print_ast(@unionInit(Ast, @tagName(t), i)),
             }
         },
