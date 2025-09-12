@@ -102,6 +102,19 @@ pub fn parse_stmt_paramed(ctx: *Context, alloc: std.mem.Allocator, tok: Token) !
     };
 }
 
+pub fn parse_type(ctx: *Context, alloc: std.mem.Allocator) !Ast.SysType {
+    const tok = try ctx.readToken();
+
+    _ = alloc;
+
+    return switch (tok) {
+        .void => Ast.SysType.Void,
+        .null => Ast.SysType.Null,
+        .num => Ast.SysType{ .Float = Ast.FLOAT_CONST }, // TDB
+        else => std.debug.panic("Undefined type\n", .{}),
+    };
+}
+
 pub fn parse_var(ctx: *Context, alloc: std.mem.Allocator, is_const: bool) !Ast.Ast {
     const lit = try ctx.readToken();
 
@@ -109,6 +122,16 @@ pub fn parse_var(ctx: *Context, alloc: std.mem.Allocator, is_const: bool) !Ast.A
         .literal => {},
         else => return error.ExpectedLit,
     }
+
+    const type_specify = try ctx.peekToken();
+    const var_type: Ast.VarTypeSpecified = switch (type_specify) {
+        .colon => blk: {
+            _ = try ctx.readToken();
+            break :blk .{ .specified = try parse_type(ctx, alloc) };
+        },
+        .assign => .infer,
+        else => return error.UnmatchedToken,
+    };
 
     const assign_tok = try ctx.readToken();
 
@@ -124,7 +147,12 @@ pub fn parse_var(ctx: *Context, alloc: std.mem.Allocator, is_const: bool) !Ast.A
     return Ast.Ast{
         .stmt = .{
             .assign = .{
-                .@"var" = .{ .ident = lit.literal, .is_const = is_const },
+                .@"var" = .{
+                    .ident = lit.literal,
+                    .is_const = is_const,
+                    .type = var_type,
+                },
+
                 .assign = switch (assign) {
                     // .expr => |e| .{ .expr = e },
                     .expr => |e| e,
@@ -418,6 +446,9 @@ const assign_if = "const x = if (true) 3 else 4;";
 const assign_if_block = "const x = if (true) {3} else {4};";
 const assign_if_else_if_block_else = "const x = if (true) {const y = 4;3} else if (false) {4} else 9;";
 
+const reassign_typed = "const x: num = 3; x = 4;";
+const block_typed = "const x: void = {const y = 3;};";
+
 const r1 = "x : 3;"; // no - syntax error
 const r2 = "x = 3;"; // no - assigned variable
 
@@ -532,6 +563,19 @@ test "parse assign_if_else_if_block_else" {
     );
 }
 
+test "parse reassign_typed" {
+    try parse_test_generic_str(
+        reassign_typed,
+        "reassign_typed",
+    );
+}
+
+test "parse block_typed" {
+    try parse_test_generic_str(
+        block_typed,
+        "block_typed",
+    );
+}
 // inline
 fn parse_test_generic_str(test_str: []const u8, test_name: []const u8) !void {
     std.log.info("=> starting parse test: {s}\n", .{test_name});

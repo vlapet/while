@@ -24,6 +24,9 @@ pub const Token = union(enum) {
     @"return",
     true,
     false,
+    void,
+    null,
+    num, // This will eventually be swapped for proper float and int support
 };
 
 const TokenMap = std.StaticStringMap(Token).initComptime(
@@ -40,16 +43,15 @@ const TokenMap = std.StaticStringMap(Token).initComptime(
         .{ "else", .@"else" },
         .{ "const", .@"const" },
         .{ "var", .@"var" },
-        // .{ "assign", .assign },
-        // .{ "assign", .assign },
-        // .{ "semicolon", .semicolon },
-        // .{ "colon", .colon },
         .{ ";", .semicolon },
         .{ ":", .colon },
         .{ "", .eof },
-        .{ "", .function },
+        .{ "fn", .function },
         .{ "true", .true },
         .{ "false", .false },
+        .{ "void", .void },
+        .{ "null", .null },
+        .{ "num", .num },
     },
 );
 

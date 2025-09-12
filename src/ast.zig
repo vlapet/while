@@ -2,6 +2,7 @@ const std = @import("std");
 const context = @import("context.zig");
 
 const Self = @This();
+pub const FLOAT_CONST = 64;
 
 // pub const FnHead = struct {
 //     ident: []const u8,
@@ -28,6 +29,9 @@ pub const SysType = union(enum) {
     // String: void, // tbd: do we want to support this explicitly?
     Null: void,
     Function: FnType,
+    // Struct: StructType,
+    // Union: UnionType,
+    // Enum: EnumType,
 };
 
 pub const VarType = union(enum) {
@@ -67,8 +71,14 @@ const @"struct" = struct {
     // fields: std.AutoArrayHashMap(comptime K: type, comptime V: type)
 };
 
+pub const VarTypeSpecified = union(enum) {
+    infer: void,
+    specified: SysType,
+};
+
 pub const Var = struct {
     is_const: bool,
+    type: VarTypeSpecified,
     ident: []const u8,
 };
 
@@ -152,6 +162,7 @@ pub const Ast = union(enum) {
     stmts: Statements,
     bin_op: BinOperation,
     uni_op: UniOperation,
+    sys_type: SysType,
     // semicolon,
     // assign: Assign,
     eof,
@@ -240,9 +251,14 @@ pub fn print_ast(ast: Ast) !void {
     switch (ast) {
         .@"var" => |v| {
             std.debug.print(
-                "var -> ident: {s}\tis_const: {}\t",
+                "var -> ident: {s}\tis_const: {}\ttype: ",
                 .{ v.ident, v.is_const },
             );
+            switch (v.type) {
+                .infer => std.debug.print("INFER", .{}),
+                .specified => |specified| try print_ast(Ast{ .sys_type = specified }),
+            }
+            std.debug.print("\n", .{});
         },
 
         // .assign => |a| {
@@ -349,6 +365,15 @@ pub fn print_ast(ast: Ast) !void {
                 try print_ast(Ast{ .stmts = s_i.* })
             else
                 std.debug.print("STMTSNULL\n", .{});
+        },
+        .sys_type => |v| {
+            switch (v) {
+                .Char => std.debug.print("CHAR", .{}),
+                .Float => |n| std.debug.print("FLOAT: {}", .{n}),
+                .Function => std.debug.panic("UNIMPLEMENTED", .{}),
+                .Null => std.debug.print("NULL", .{}),
+                .Void => std.debug.print("VOID", .{}),
+            }
         },
     }
 }
