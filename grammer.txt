@@ -15,17 +15,17 @@ EXPRESSION              := LITERAL
                          | BLOCK
 
 
-IF                      := if [| EXPRESSION | BLOCK |] BLOCK ELSE
+IF                      := if EXPRESSION BLOCK ELSE
 ELSE                    := BLOCK
 
 BLOCK                   := {  STATEMENTS  } // final expression returns
-                         | { STATEMENTS; BREAK EXPRESSION }
+                         | { STATEMENTS; EXPRESSION }
 
-CONSTDECL | VARDECL     := EXPRESSION // | BLOCK <- TBD
+CONSTDECL | VARDECL     := EXPRESSION 
 
 FUNCTION                := fn LITERAL (...TBD) TYPE BLOCK
 
-RETURN                  := return [|NONE | EXPRESSION | BLOCK |]
+RETURN                  := return [|NONE | EXPRESSION |]
 
 
 /*
@@ -34,13 +34,13 @@ RETURN                  := return [|NONE | EXPRESSION | BLOCK |]
 const a = EXPRESSION; // expressions resolve to some final value
 e.g.
 const b = 3;
-const c = if true 3 else 9;
+const c = if true {3} else {9};
 const d = if true {
     const x = 9; 
     9
-} else 7;
+} else {7};
 
-// const e = while (c < 10) {} <- TBD
+// const e = while c < 10 {} <- TBD
 const f = fn () { return 3; }; // no need for special lambda syntax
 
 const g = f(); // g = 3
