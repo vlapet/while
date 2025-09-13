@@ -26,6 +26,7 @@ pub fn parse_stmts(ctx: *Context, alloc: std.mem.Allocator) !Ast.Ast {
 
     const skip_semicolon = switch (stmt.stmt) {
         .@"if" => true,
+        .block => |b| if (b.expr) |_| std.debug.panic("block cannot have expr return as statement block\n", .{}) else true,
         else => false,
     };
 
@@ -90,10 +91,15 @@ pub fn parse_stmt_paramed(ctx: *Context, alloc: std.mem.Allocator, tok: Token) !
             };
         },
         .lbrace => blk: {
-            const b_ast = try parse_block(ctx, alloc);
-            break :blk Ast.Ast{ .stmt = .{ .block = b_ast.expr.block } };
+            const b_ast = try parse_block(ctx, alloc, .stmt);
+            // break :blk Ast.Ast{ .stmt = .{ .block = b_ast.expr.block } };
+            break :blk b_ast;
         },
-        .@"if" => try parse_if(ctx, alloc, .stmt),
+        .@"if" => i: {
+            // const if_stmt = try parse_if(ctx, alloc);
+            // break :i Ast.Ast{ .stmt = .{ .@"if" = if_stmt } };
+            break :i try parse_if_opt(ctx, alloc, .stmt);
+        },
         else => |e| {
             std.log.err("UNREACHABLE! Token: {any}\n", .{e});
 
@@ -173,7 +179,11 @@ pub fn parse_expression(ctx: *Context, alloc: std.mem.Allocator) !Ast.Ast {
 
 pub fn parse_expression_paramed(ctx: *Context, alloc: std.mem.Allocator, tok: Token) !Ast.Ast {
     return switch (tok) {
-        .@"if" => try parse_if(ctx, alloc, .expr),
+        .@"if" => i: {
+            // const if_expr = try parse_if(ctx, alloc);
+            // break :i Ast.Ast{ .expr = .{ .@"if" = if_expr } };
+            break :i try parse_if_opt(ctx, alloc, .expr);
+        },
         // .literal => |l| Ast.Ast{ .expr = .{ .val_lit = l } },
         .literal => error.UnexpectedLiteral,
         .quoted_literal => |q| Ast.Ast{ .expr = .{ .basic_var = .{ .val_lit = q } } },
@@ -183,7 +193,7 @@ pub fn parse_expression_paramed(ctx: *Context, alloc: std.mem.Allocator, tok: To
         // .lbrace => unreachable,
         .function => unreachable,
         .@"return" => unreachable,
-        .lbrace => return try parse_block(ctx, alloc),
+        .lbrace => return try parse_block(ctx, alloc, .expr),
 
         else => |e| {
             std.log.err("UNREACHABLE! Token: {any}\n", .{e});
@@ -209,7 +219,13 @@ const blk_err = error{
 // };
 
 // pub fn parse_block(ctx: *Context, alloc: std.mem.Allocator) blk_err!Ast.Ast {
-pub fn parse_block(ctx: *Context, alloc: std.mem.Allocator) anyerror!Ast.Ast {
+pub fn parse_block(ctx: *Context, alloc: std.mem.Allocator, opt: enum { stmt, expr }) anyerror!Ast.Ast {
+    std.log.debug("Start parsing block - as: {s}\n", .{switch (opt) {
+        .stmt => "stmt",
+        .expr => "expr",
+    }});
+    defer std.log.debug("finish parsing block\n", .{});
+
     const expr_or_stmt_tok = try ctx.readToken();
     const res = switch (expr_or_stmt_tok) {
         .@"const" => try parse_var(ctx, alloc, true),
@@ -218,20 +234,30 @@ pub fn parse_block(ctx: *Context, alloc: std.mem.Allocator) anyerror!Ast.Ast {
             .basic_var = .{ .val_num = n },
         } },
         .lbrace => bk: {
-            const ast_blk = try parse_block(ctx, alloc);
-            break :bk Ast.Ast{ .expr = .{
-                .block = ast_blk.expr.block,
-            } };
+            const ast_blk = try parse_block(ctx, alloc, .expr);
+
+            // break :bk Ast.Ast{ .expr = .{
+            //     .block = ast_blk.expr.block,
+            // } };
+            break :bk ast_blk;
         },
         .rbrace => { // block MUST be empty
             std.log.debug("Empty Block\n", .{});
 
-            return Ast.Ast{ .expr = .{
-                .block = .{
-                    .expr = null,
-                    .stmts = null,
-                },
-            } };
+            return switch (opt) {
+                .stmt => Ast.Ast{ .stmt = .{
+                    .block = .{
+                        .expr = null,
+                        .stmts = null,
+                    },
+                } },
+                .expr => Ast.Ast{ .expr = .{
+                    .block = .{
+                        .expr = null,
+                        .stmts = null,
+                    },
+                } },
+            };
         },
 
         .true, .false => unreachable,
@@ -255,27 +281,53 @@ pub fn parse_block(ctx: *Context, alloc: std.mem.Allocator) anyerror!Ast.Ast {
             // @memcpy(expr[0..1], (&res.expr)[0..1]);
             std.debug.print("TAGNAMEEXPR: {s}\n", .{@tagName(expr.*)});
             // @unionInit(Ast.Expr, @tagName(res.expr), res.expr);
-            return Ast.Ast{ .expr = .{ .block = .{
-                .expr = expr,
-                .stmts = null,
-            } } };
+            return switch (opt) {
+                .stmt => Ast.Ast{ .stmt = .{ .block = .{
+                    .expr = expr,
+                    .stmts = null,
+                } } },
+                .expr => Ast.Ast{ .expr = .{ .block = .{
+                    .expr = expr,
+                    .stmts = null,
+                } } },
+            };
         },
         .semicolon => {
             switch (tok_end_stmt_check) {
                 .rbrace => { // expr_or_stmt is end stmt with no end expr
                     _ = try ctx.readToken(); // discard rbrace
                     const stmts = try alloc.create(Ast.Statements);
-                    const stmt = res.stmt;
+                    // const stmt = res.stmt;
+                    const stmt = switch (res) {
+                        .stmt => |st| st,
+                        .expr => |ex| switch (ex) {
+                            .basic_var => std.debug.panic("BasicVar cannot be parsed as a statement\n", .{}),
+                            // .@"if" => |i| Ast.Statement{ .@"if" = i },
+                            .block => |b| Ast.Statement{ .block = b },
+                            else => unreachable,
+                        },
+                        else => unreachable,
+                    };
 
                     stmts.* = Ast.Statements{
                         .statement = stmt,
                         .statements = null,
                     };
 
-                    return Ast.Ast{ .expr = .{ .block = .{
+                    // return Ast.Ast{ .expr = .{ .block = .{
+                    //     .expr = null,
+                    //     .stmts = stmts,
+                    // } } };
+
+                    const blk = Ast.Block{
                         .expr = null,
                         .stmts = stmts,
-                    } } };
+                    };
+
+                    return switch (opt) {
+                        .expr => Ast.Ast{ .expr = .{ .block = blk } },
+                        .stmt => Ast.Ast{ .stmt = .{ .block = blk } },
+                    };
                 },
                 else => {},
             }
@@ -284,7 +336,8 @@ pub fn parse_block(ctx: *Context, alloc: std.mem.Allocator) anyerror!Ast.Ast {
         else => {},
     }
 
-    const block = try parse_block(ctx, alloc);
+    // const block = try parse_block(ctx, alloc, .stmt);
+    const block = try parse_block(ctx, alloc, .expr);
 
     const stmts = try alloc.create(Ast.Statements);
 
@@ -304,53 +357,37 @@ pub fn parse_block(ctx: *Context, alloc: std.mem.Allocator) anyerror!Ast.Ast {
         .statements = block.expr.block.stmts,
     };
 
-    return Ast.Ast{ .expr = .{ .block = .{
+    // return Ast.Ast{ .expr = .{ .block = .{
+    //     .expr = block.expr.block.expr,
+    //     .stmts = stmts,
+    // } } };
+
+    const blk = Ast.Block{
         .expr = block.expr.block.expr,
         .stmts = stmts,
-    } } };
+    };
+
+    return switch (opt) {
+        .expr => Ast.Ast{ .expr = .{ .block = blk } },
+        .stmt => Ast.Ast{ .stmt = .{ .block = blk } },
+    };
 }
 
-// If "if" is parsed as
-//      expr: allow expr and block types -> easier to type
-//      stmt: allow only block types NOT expr -> allow if (...) {...} else if (...) {..}
-// Avoid:
-// if (<cond>)
-//      <expr>;
-// <expr>;
-// --vs--
-// if (<cond>){
-//      <expr>;
-//      <expr>;
-// }
-pub fn parse_if(ctx: *Context, alloc: std.mem.Allocator, opt: enum { stmt, expr }) anyerror!Ast.Ast {
-    const lparen = try ctx.readToken();
-    try check_tok(lparen, Token.lparen);
-
+// Examples:
+// if true {const x = 5} else {const y = 4;}
+// const x = if true {3} else {4};
+pub fn parse_if(ctx: *Context, alloc: std.mem.Allocator) anyerror!Ast.If {
     const cond_expr = try alloc.create(Ast.Expr);
     const if_expr = try alloc.create(Ast.Expr);
     var else_expr: ?*Ast.Expr = null;
 
     const cond_parse = try parse_expression(ctx, alloc);
-    // cond_expr.* = try parse_expression(ctx, alloc);
     cond_expr.* = cond_parse.expr;
 
-    const rparen = try ctx.readToken();
-    try check_tok(rparen, Token.rparen);
+    const lbrace = try ctx.readToken();
+    try check_tok(lbrace, Token.lbrace);
 
-    const if_parse = try parse_expression(ctx, alloc);
-    switch (opt) {
-        .stmt => {
-            switch (if_parse.expr) {
-                .block => |b| {
-                    if (b.expr) |_| std.debug.panic("Unsupported if configuration, expr in block only allowed if parsed as stmt\n", .{});
-                },
-                else => {
-                    std.debug.panic("Unsupported if configuration, only allow non-block in expr\n", .{});
-                },
-            }
-        },
-        else => {},
-    }
+    const if_parse = try parse_block(ctx, alloc, .expr);
     if_expr.* = if_parse.expr;
 
     const check_else_tok = try ctx.peekToken();
@@ -359,35 +396,27 @@ pub fn parse_if(ctx: *Context, alloc: std.mem.Allocator, opt: enum { stmt, expr 
         .@"else" => {
             _ = try ctx.readToken(); // discard else token
             else_expr = try alloc.create(Ast.Expr);
-            const else_parse = try parse_expression(ctx, alloc);
-            switch (opt) {
-                .stmt => {
-                    switch (else_parse.expr) {
-                        .@"if" => {}, // allow "else if(...)"
-                        .block => |b| {
-                            if (b.expr) |_| std.debug.panic("Unsupported if configuration, expr in block only allowed if parsed as stmt\n", .{});
-                        },
-                        else => {
-                            std.debug.panic("Unsupported if configuration, only allow non-block in expr\n", .{});
-                        },
-                    }
-                },
-                else => {},
-            }
+            const if_lbrace_chk = try ctx.readToken();
+            const else_parse = switch (if_lbrace_chk) {
+                .lbrace => try parse_block(ctx, alloc, .expr),
+                .@"if" => try parse_if_opt(ctx, alloc, .expr),
+                inline else => |_, t| std.debug.panic("Unreachable token found: {}\n", .{t}),
+            };
             else_expr.?.* = else_parse.expr;
         },
         else => {},
     }
 
-    switch (opt) {
-        .expr => return Ast.Ast{ .expr = .{
-            .@"if" = .{ .cond_expr = cond_expr, .if_expr = if_expr, .else_expr = else_expr },
-        } },
+    return Ast.If{ .cond_expr = cond_expr, .if_expr = if_expr, .else_expr = else_expr };
+}
 
-        .stmt => return Ast.Ast{ .stmt = .{
-            .@"if" = .{ .cond_expr = cond_expr, .if_expr = if_expr, .else_expr = else_expr },
-        } },
-    }
+pub fn parse_if_opt(ctx: *Context, alloc: std.mem.Allocator, opt: enum { stmt, expr }) anyerror!Ast.Ast {
+    const i = try parse_if(ctx, alloc);
+
+    return switch (opt) {
+        .expr => Ast.Ast{ .expr = .{ .@"if" = i } },
+        .stmt => Ast.Ast{ .stmt = .{ .@"if" = i } },
+    };
 }
 
 pub fn parse_function(ctx: *Context, alloc: std.mem.Allocator) !Ast.Ast {
@@ -438,16 +467,19 @@ const assign_nested_seq = "const x = { {}; { 3 } };";
 
 const stmt_block_empty = "{};";
 
-const stmt_if_empty = "if (true) {} else {}";
-const stmt_if_else_if_empty = "if (true) {} else if (false) {}";
-const stmt_if_stmts = "if (true) {const x = 4;} else {const x = 3;}";
+const stmt_if_empty = "if true {} else {}";
+const stmt_if_else_if_empty = "if true {} else if false {}";
+const stmt_if_stmts = "if true {const x = 4;} else {const x = 3;}";
 
-const assign_if = "const x = if (true) 3 else 4;";
-const assign_if_block = "const x = if (true) {3} else {4};";
-const assign_if_else_if_block_else = "const x = if (true) {const y = 4;3} else if (false) {4} else 9;";
+// const assign_if = "const x = if true {3} else {4};";
+const assign_if_block = "const x = if true {3} else {4};";
+const assign_if_else_if_block_else = "const x = if true {const y = 4;3} else if false {4} else {9};";
 
 const reassign_typed = "const x: num = 3; x = 4;";
 const block_typed = "const x: void = {const y = 3;};";
+
+const stmt_block_empty2 = "{}";
+const stmt_block_nested = "{{};}";
 
 const r1 = "x : 3;"; // no - syntax error
 const r2 = "x = 3;"; // no - assigned variable
@@ -542,12 +574,12 @@ test "parse stmt_if_stmts" {
     );
 }
 
-test "parse assign_if" {
-    try parse_test_generic_str(
-        assign_if,
-        "assign_if",
-    );
-}
+// test "parse assign_if" {
+//     try parse_test_generic_str(
+//         assign_if,
+//         "assign_if",
+//     );
+// }
 
 test "parse assign_if_block" {
     try parse_test_generic_str(
@@ -574,6 +606,20 @@ test "parse block_typed" {
     try parse_test_generic_str(
         block_typed,
         "block_typed",
+    );
+}
+
+test "parse stmt_block_empty2" {
+    try parse_test_generic_str(
+        stmt_block_empty2,
+        "stmt_block_empty2",
+    );
+}
+
+test "parse stmt_block_nested" {
+    try parse_test_generic_str(
+        stmt_block_nested,
+        "stmt_block_nested",
     );
 }
 // inline

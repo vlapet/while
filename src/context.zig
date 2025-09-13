@@ -91,7 +91,7 @@ pub fn peekSectionString(self: *Self) ![]const u8 {
         }
 
         // std.log.info("alphanum: {c}\n", .{(try self.peekByte()).*});
-        std.log.debug("alphanum: {c}\n", .{peek});
+        // std.log.debug("alphanum: {c}\n", .{peek});
 
         self.pos += 1;
     }

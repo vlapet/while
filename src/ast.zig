@@ -163,6 +163,8 @@ pub const Ast = union(enum) {
     bin_op: BinOperation,
     uni_op: UniOperation,
     sys_type: SysType,
+    block: Block,
+    @"if": If,
     // semicolon,
     // assign: Assign,
     eof,
@@ -288,30 +290,13 @@ pub fn print_ast(ast: Ast) !void {
                     }
                 },
                 .block => |b| {
-                    std.debug.print("BLOCK: \n", .{});
-                    if (b.stmts) |s| try print_ast(Ast{ .stmts = s.* }) else std.debug.print("stmts: NULL\n", .{});
-                    if (b.expr) |ex| try print_ast(Ast{ .expr = ex.* }) else std.debug.print("expr: NULL\n", .{});
-                    std.debug.print("ENDBLOCK: \n", .{});
+                    try print_ast(Ast{ .block = b });
                 },
                 .@"if" => |i| {
-                    std.debug.print("IF: \n", .{});
-                    std.debug.print("COND: \t", .{});
-                    try print_ast(Ast{ .expr = i.cond_expr.* });
-                    std.debug.print("IF_BRANCH: \t", .{});
-                    try print_ast(Ast{ .expr = i.if_expr.* });
-                    std.debug.print("ELSE_BRANCH: \t", .{});
-                    if (i.else_expr) |ex| try print_ast(Ast{ .expr = ex.* }) else std.debug.print("expr: NULL\n", .{});
-                    std.debug.print("ENDIF: \n", .{});
+                    try print_ast(Ast{ .@"if" = i });
                 },
             }
         },
-        // .exprs => |e| {
-        //     try print_ast(Ast{ .expr = e.expr });
-        //     if (e.exprs) |ex| {
-        //         try print_ast(Ast{ .exprs = ex.* });
-        //     }
-        // },
-        // .semicolon => std.debug.print(";", .{}),
         .uni_op => |u| {
             std.debug.print("uni_op: {s}", .{@tagName(u.tag)});
             try print_ast(Ast{ .expr = u.expr });
@@ -322,37 +307,17 @@ pub fn print_ast(ast: Ast) !void {
                 .assign => |a| {
                     std.debug.print("assign ->", .{});
                     try print_ast(Ast{ .@"var" = a.@"var" });
-                    // try print_ast(Ast{ .expr = a.expr });
-                    // switch (a.assign) {
-                    //     .expr => |e| try print_ast(Ast{ .expr = e }),
-                    // }
                     try print_ast(Ast{ .expr = a.assign });
                 },
                 .reassign => |r| {
                     std.debug.print("reassign -> ident -> {s}\t", .{r.ident});
-                    // try print_ast(Ast{ .expr = a.expr });
-                    // switch (r.assign) {
-                    //     .expr => |e| try print_ast(Ast{ .expr = e }),
-                    // }
                     try print_ast(Ast{ .expr = r.assign });
                 },
-                // .block => std.debug.print("BLOCK: \t", .{}),
-                // .@"if" => std.debug.print("IF: \t", .{}),
                 .block => |b| {
-                    std.debug.print("BLOCK: \n", .{});
-                    if (b.stmts) |st| try print_ast(Ast{ .stmts = st.* }) else std.debug.print("stmts: NULL\n", .{});
-                    if (b.expr) |ex| try print_ast(Ast{ .expr = ex.* }) else std.debug.print("expr: NULL\n", .{});
-                    std.debug.print("ENDBLOCK: \n", .{});
+                    try print_ast(Ast{ .block = b });
                 },
                 .@"if" => |i| {
-                    std.debug.print("IF: \n", .{});
-                    std.debug.print("COND: \t", .{});
-                    try print_ast(Ast{ .expr = i.cond_expr.* });
-                    std.debug.print("IF_BRANCH: \t", .{});
-                    try print_ast(Ast{ .expr = i.if_expr.* });
-                    std.debug.print("ELSE_BRANCH: \t", .{});
-                    if (i.else_expr) |ex| try print_ast(Ast{ .expr = ex.* }) else std.debug.print("expr: NULL\n", .{});
-                    std.debug.print("ENDIF: \n", .{});
+                    try print_ast(Ast{ .@"if" = i });
                 },
 
                 // inline else => |i, t| try print_ast(@unionInit(Ast, @tagName(t), i)),
@@ -374,6 +339,22 @@ pub fn print_ast(ast: Ast) !void {
                 .Null => std.debug.print("NULL", .{}),
                 .Void => std.debug.print("VOID", .{}),
             }
+        },
+        .block => |b| {
+            std.debug.print("BLOCK: \n", .{});
+            if (b.stmts) |s| try print_ast(Ast{ .stmts = s.* }) else std.debug.print("stmts: NULL\n", .{});
+            if (b.expr) |ex| try print_ast(Ast{ .expr = ex.* }) else std.debug.print("expr: NULL\n", .{});
+            std.debug.print("ENDBLOCK: \n", .{});
+        },
+        .@"if" => |i| {
+            std.debug.print("IF: \n", .{});
+            std.debug.print("COND: \t", .{});
+            try print_ast(Ast{ .expr = i.cond_expr.* });
+            std.debug.print("IF_BRANCH: \t", .{});
+            try print_ast(Ast{ .expr = i.if_expr.* });
+            std.debug.print("ELSE_BRANCH: \t", .{});
+            if (i.else_expr) |ex| try print_ast(Ast{ .expr = ex.* }) else std.debug.print("expr: NULL\n", .{});
+            std.debug.print("ENDIF: \n", .{});
         },
     }
 }
