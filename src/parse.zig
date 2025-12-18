@@ -27,6 +27,7 @@ pub fn parse_stmts(ctx: *Context, alloc: std.mem.Allocator) !Ast.Ast {
     const skip_semicolon = switch (stmt.stmt) {
         .@"if" => true,
         .block => |b| if (b.expr) |_| std.debug.panic("block cannot have expr return as statement block\n", .{}) else true,
+        .loop => true,
         else => false,
     };
 
@@ -91,6 +92,7 @@ pub fn parse_stmt_paramed(ctx: *Context, alloc: std.mem.Allocator, tok: Token) !
         },
         .lbrace => try parse_block_opt(ctx, alloc, .stmt),
         .@"if" => try parse_if_opt(ctx, alloc, .stmt),
+        .loop => try parse_loop_opt(ctx, alloc, .stmt),
         else => |e| {
             std.log.err("UNREACHABLE! Token: {any}\n", .{e});
 
@@ -185,7 +187,7 @@ pub fn parse_expression_paramed(ctx: *Context, alloc: std.mem.Allocator, tok: To
         .function => unreachable,
         .@"return" => unreachable,
         .lbrace => return try parse_block_opt(ctx, alloc, .expr),
-
+        .loop => try parse_loop_opt(ctx, alloc, .expr),
         else => |e| {
             std.log.err("UNREACHABLE! Token: {any}\n", .{e});
 
@@ -234,10 +236,30 @@ pub fn parse_block(ctx: *Context, alloc: std.mem.Allocator) anyerror!Ast.Block {
         .true, .false => unreachable,
         .@"if", .@"return", .@"while" => unreachable,
         .semicolon => std.debug.panic("Semicolon is invalid here\n", .{}),
+        .@"break" => b: {
+            const peek_tok = try ctx.peekToken();
+            std.log.debug("block break - peek_tok: {any}\n", .{peek_tok});
+
+            const expr_ast = switch (peek_tok) {
+                .semicolon => null,
+                else => try parse_expression(ctx, alloc),
+            };
+
+            const expr_res = if (expr_ast) |ea| ea.expr else null;
+            break :b Ast.Ast{ .stmt = .{ .@"break" = .{ .expr = expr_res } } };
+        },
+        .loop => try parse_loop_opt(ctx, alloc, .stmt),
+        // .literal => try parse
         else => |e| std.debug.panic("UNREACHABLE IN BLOCK: {s}", .{@tagName(e)}),
     };
 
-    const tok_end = try ctx.readToken();
+    // const tok_end = try ctx.readToken();
+    const tok_end = switch (expr_or_stmt_tok) {
+        .loop, .@"if" => // loops and if do not have trailing semicolon
+        // try ctx.peekToken(),
+        Token.semicolon, // pretend there is a semicolon after the loop
+        else => try ctx.readToken(),
+    };
     const tok_end_stmt_check = try ctx.peekToken();
 
     std.log.info("expr_or_stmt_tok: {s}\ttok_end: {s}\ttok_end_stmt_check: {s}\n", .{ @tagName(expr_or_stmt_tok), @tagName(tok_end), @tagName(tok_end_stmt_check) });
@@ -247,8 +269,18 @@ pub fn parse_block(ctx: *Context, alloc: std.mem.Allocator) anyerror!Ast.Block {
         .rbrace => { // expr_or_stmt is expr
             // std.debug.panic("comptime format: []const u8", .{});
             const expr = try alloc.create(Ast.Expr);
-            expr.* = res.expr;
-            std.debug.print("TAGNAME: {s}\n", .{@tagName(res.expr)});
+            // expr.* = res.expr;
+            expr.* = switch (res) {
+                .expr => |e| e,
+                .stmt => |s| switch (s) {
+                    // Loops do not need a semicolon after block
+                    .loop => |l| Ast.Expr{ .loop = l },
+                    else => unreachable,
+                },
+                else => unreachable,
+            };
+
+            // std.debug.print("TAGNAME: {s}\n", .{@tagName(res.expr)});
             std.debug.print("TAGNAMEEXPR: {s}\n", .{@tagName(expr.*)});
 
             return Ast.Block{
@@ -377,6 +409,23 @@ pub fn parse_if_opt(ctx: *Context, alloc: std.mem.Allocator, opt: enum { stmt, e
     };
 }
 
+pub fn parse_loop(ctx: *Context, alloc: std.mem.Allocator) !Ast.Loop {
+    const lbrace = try ctx.readToken();
+    try check_tok(lbrace, Token.lbrace);
+
+    const blk = try parse_block(ctx, alloc);
+    return Ast.Loop{ .block = blk };
+}
+
+pub fn parse_loop_opt(ctx: *Context, alloc: std.mem.Allocator, opt: enum { stmt, expr }) anyerror!Ast.Ast {
+    const l = try parse_loop(ctx, alloc);
+
+    return switch (opt) {
+        .expr => Ast.Ast{ .expr = .{ .loop = l } },
+        .stmt => Ast.Ast{ .stmt = .{ .loop = l } },
+    };
+}
+
 pub fn parse_function(ctx: *Context, alloc: std.mem.Allocator) !Ast.Ast {
     _ = ctx;
     _ = alloc;
@@ -425,6 +474,15 @@ const block_typed = "const x: void = {const y = 3;};";
 
 const stmt_block_empty2 = "{}";
 const stmt_block_nested = "{{};}";
+
+const stmt_loop_empty = "loop {}";
+const stmt_loop_break_empty = "loop {break;}";
+const assign_loop_empty = "const x = loop {};";
+const assign_loop_break = "const x = loop {break 3;};";
+const assign_loop_nested = "const x = loop { loop {break 3;}};";
+const assign_loop_nested_break = "const x = loop { loop {break 3;} break 4;};";
+
+const multi = "const x = 3; var y = \"abcd\"; if true {y=\"efgh\";} loop {y=\"ijkl\"; break;}";
 
 const r1 = "x : 3;"; // no - syntax error
 const r2 = "x = 3;"; // no - assigned variable
@@ -567,6 +625,56 @@ test "parse stmt_block_nested" {
         "stmt_block_nested",
     );
 }
+
+test "parse assign_loop_empty" {
+    try parse_test_generic_str(
+        assign_loop_empty,
+        "assign_loop_empty",
+    );
+}
+
+test "parse stmt_loop_break_empty" {
+    try parse_test_generic_str(
+        stmt_loop_break_empty,
+        "stmt_loop_break_empty",
+    );
+}
+
+test "parse stmt_loop_empty" {
+    try parse_test_generic_str(
+        stmt_loop_empty,
+        "stmt_loop_empty",
+    );
+}
+
+test "parse assign_loop_break" {
+    try parse_test_generic_str(
+        assign_loop_break,
+        "assign_loop_break",
+    );
+}
+
+test "parse assign_loop_nested_break" {
+    try parse_test_generic_str(
+        assign_loop_nested_break,
+        "assign_loop_nested_break",
+    );
+}
+
+test "parse assign_loop_nested" {
+    try parse_test_generic_str(
+        assign_loop_nested,
+        "assign_loop_nested",
+    );
+}
+
+// test "parse multi" {
+//     try parse_test_generic_str(
+//         multi,
+//         "multi",
+//     );
+// }
+
 // inline
 fn parse_test_generic_str(test_str: []const u8, test_name: []const u8) !void {
     std.log.info("=> starting parse test: {s}\n", .{test_name});

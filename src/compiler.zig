@@ -57,6 +57,7 @@ pub fn eval_type_expr(self: *Self, expr: Ast.Expr) !Ast.VarType {
             }
         },
         .@"if" => std.debug.panic("unimplemented\n", .{}),
+        .loop => std.debug.panic("unimplemented\n", .{}),
     };
 }
 
@@ -103,6 +104,8 @@ fn gen_asm_stmt(self: *Self, stmt: Ast.Statement) !void {
         .reassign => |r| try self.gen_asm_assign_or_reassign(Ast.AssignReassign{ .reassign = r }),
         .block => return error.Todo,
         .@"if" => return error.Todo,
+        .loop => return error.Todo,
+        .@"break" => return error.Todo,
 
         // else => return error.Undefined,
     };
@@ -256,6 +259,7 @@ fn gen_asm_assign_or_reassign(self: *Self, ar: Ast.AssignReassign) anyerror![]co
                         },
                         .block => std.debug.panic("unimplemented\n", .{}),
                         .@"if" => std.debug.panic("unimplemented\n", .{}),
+                        .loop => std.debug.panic("unimplemented\n", .{}),
                     }
                 };
 
@@ -268,6 +272,7 @@ fn gen_asm_assign_or_reassign(self: *Self, ar: Ast.AssignReassign) anyerror![]co
                 // return error.Todo;
             },
             .@"if" => std.debug.panic("unimplemented", .{}),
+            .loop => std.debug.panic("unimplemented", .{}),
         };
 
         return error.undefined;

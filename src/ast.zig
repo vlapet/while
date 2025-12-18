@@ -92,12 +92,22 @@ pub const Assign = struct {
     assign: Expr,
 };
 
+pub const Loop = struct {
+    block: Block,
+};
+
+// Only valid as a stmt
+pub const Break = struct {
+    expr: ?Expr,
+};
+
 pub const Expr = union(enum) {
     // expr: Expr,
     //if: TODO!,
     basic_var: VarType,
     block: Block,
     @"if": If,
+    loop: Loop,
     // bin_op: BinOperation,
     // uni_op: UniOperation,
 
@@ -144,8 +154,9 @@ pub const Statement = union(enum) {
     assign: Assign,
     reassign: ReAssign,
     @"if": If,
-    // loop,
+    loop: Loop,
     block: Block,
+    @"break": Break,
     // Return
 };
 
@@ -165,6 +176,7 @@ pub const Ast = union(enum) {
     sys_type: SysType,
     block: Block,
     @"if": If,
+    loop: Loop,
     // semicolon,
     // assign: Assign,
     eof,
@@ -295,6 +307,7 @@ pub fn print_ast(ast: Ast) !void {
                 .@"if" => |i| {
                     try print_ast(Ast{ .@"if" = i });
                 },
+                .loop => |l| try print_ast(Ast{ .loop = l }),
             }
         },
         .uni_op => |u| {
@@ -318,6 +331,13 @@ pub fn print_ast(ast: Ast) !void {
                 },
                 .@"if" => |i| {
                     try print_ast(Ast{ .@"if" = i });
+                },
+                .loop => |l| try print_ast(Ast{ .loop = l }),
+                .@"break" => |b| {
+                    std.debug.print("BREAK:\t", .{});
+                    if (b.expr) |ex| {
+                        try print_ast(Ast{ .expr = ex });
+                    } else std.debug.print("NULLEXPR", .{});
                 },
 
                 // inline else => |i, t| try print_ast(@unionInit(Ast, @tagName(t), i)),
@@ -355,6 +375,11 @@ pub fn print_ast(ast: Ast) !void {
             std.debug.print("ELSE_BRANCH: \t", .{});
             if (i.else_expr) |ex| try print_ast(Ast{ .expr = ex.* }) else std.debug.print("expr: NULL\n", .{});
             std.debug.print("ENDIF: \n", .{});
+        },
+        .loop => |l| {
+            std.debug.print("LOOP: \n", .{});
+            try print_ast(Ast{ .block = l.block });
+            std.debug.print("ENDLOOP: \n", .{});
         },
     }
 }
