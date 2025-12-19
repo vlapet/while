@@ -1,5 +1,6 @@
 const std = @import("std");
 const context = @import("context.zig");
+const types = @import("types.zig");
 
 const Self = @This();
 pub const FLOAT_CONST = 64;
@@ -8,31 +9,6 @@ pub const FLOAT_CONST = 64;
 //     ident: []const u8,
 //     params: []SysType,
 // };
-
-pub const FnType = struct {
-    params: []SysType,
-    ret_type: []SysType,
-};
-
-// pub const function = struct {
-//     head: FnHead,
-//     body: Block,
-// };
-
-// pub const Type = union(enum) {};
-
-pub const SysType = union(enum) {
-    Void: void,
-    // Int: u8, // tbd
-    Float: u8, // size tbd
-    Char: void, // this is u8 but we will differentiate
-    // String: void, // tbd: do we want to support this explicitly?
-    Null: void,
-    Function: FnType,
-    // Struct: StructType,
-    // Union: UnionType,
-    // Enum: EnumType,
-};
 
 pub const VarType = union(enum) {
     val_lit: []const u8, // TODO: rename to val_str
@@ -52,6 +28,8 @@ pub const Block = struct {
 };
 
 pub const If = struct {
+    /// Structure
+    /// if (cond_expr) if_expr else_expr
     cond_expr: *Expr,
     if_expr: *Expr,
     else_expr: ?*Expr,
@@ -73,7 +51,7 @@ const @"struct" = struct {
 
 pub const VarTypeSpecified = union(enum) {
     infer: void,
-    specified: SysType,
+    specified: types.SysType,
 };
 
 pub const Var = struct {
@@ -173,7 +151,7 @@ pub const Ast = union(enum) {
     stmts: Statements,
     bin_op: BinOperation,
     uni_op: UniOperation,
-    sys_type: SysType,
+    sys_type: types.SysType,
     block: Block,
     @"if": If,
     loop: Loop,
@@ -355,7 +333,8 @@ pub fn print_ast(ast: Ast) !void {
             switch (v) {
                 .Char => std.debug.print("CHAR", .{}),
                 .Float => |n| std.debug.print("FLOAT: {}", .{n}),
-                .Function => std.debug.panic("UNIMPLEMENTED", .{}),
+                .Function => std.debug.panic("FUNCTION UNIMPLEMENTED", .{}),
+                .Pointer => std.debug.panic("POINTER UNIMPLEMENTED", .{}),
                 .Null => std.debug.print("NULL", .{}),
                 .Void => std.debug.print("VOID", .{}),
             }

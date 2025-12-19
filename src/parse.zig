@@ -2,6 +2,7 @@ const std = @import("std");
 const Context = @import("context.zig");
 const Tok = @import("token.zig");
 const Token = Tok.Token;
+const Types = @import("types.zig");
 const Ast = @import("ast.zig");
 const AstIn = Ast.Ast;
 
@@ -101,15 +102,15 @@ pub fn parse_stmt_paramed(ctx: *Context, alloc: std.mem.Allocator, tok: Token) !
     };
 }
 
-pub fn parse_type(ctx: *Context, alloc: std.mem.Allocator) !Ast.SysType {
+pub fn parse_type(ctx: *Context, alloc: std.mem.Allocator) !Types.SysType {
     const tok = try ctx.readToken();
 
     _ = alloc;
 
     return switch (tok) {
-        .void => Ast.SysType.Void,
-        .null => Ast.SysType.Null,
-        .num => Ast.SysType{ .Float = Ast.FLOAT_CONST }, // TDB
+        .void => Types.SysType.Void,
+        .null => Types.SysType.Null,
+        .num => Types.SysType{ .Float = Ast.FLOAT_CONST }, // TDB
         else => std.debug.panic("Undefined type\n", .{}),
     };
 }
@@ -250,6 +251,7 @@ pub fn parse_block(ctx: *Context, alloc: std.mem.Allocator) anyerror!Ast.Block {
         },
         .loop => try parse_loop_opt(ctx, alloc, .stmt),
         // .literal => try parse
+        // else => |e| std.debug.panic("UNREACHABLE IN BLOCK: {s}", .{@tagName(e)}),
         else => |e| std.debug.panic("UNREACHABLE IN BLOCK: {s}", .{@tagName(e)}),
     };
 
@@ -668,12 +670,13 @@ test "parse assign_loop_nested" {
     );
 }
 
-// test "parse multi" {
-//     try parse_test_generic_str(
-//         multi,
-//         "multi",
-//     );
-// }
+//
+test "parse multi" {
+    try parse_test_generic_str(
+        multi,
+        "multi",
+    );
+}
 
 // inline
 fn parse_test_generic_str(test_str: []const u8, test_name: []const u8) !void {

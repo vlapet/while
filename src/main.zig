@@ -31,7 +31,7 @@ pub fn main() !void {
 
 test "tests" {
     std.testing.log_level = .debug;
-    std.testing.log_level = .info;
+    // std.testing.log_level = .info;
 
     // _ = token;
     _ = parse;

@@ -11,8 +11,7 @@ const Self = @This();
 // const var_map = std.AutoArrayHashMapUnmanaged([]const u8, u32);
 const VarInfo = struct {
     ptr_addr: u32,
-    // var_type: Ast.VarType,
-    var_type: types.SysType,
+    var_type: Ast.VarType,
     is_const: bool,
 };
 // const var_map = std.StringArrayHashMapUnmanaged(u32); // Map to pointer address of vars in scope
@@ -39,29 +38,29 @@ fn_queue_gen: HeapStr, // generate function assembly block
 
 // main: ?*Ast., // TODO: TBD
 
-// pub fn eval_type_expr(self: *Self, expr: Ast.Expr) !Ast.VarType {
-//     return switch (expr) {
-//         .basic_var => |b| switch (b) {
-//             inline .val_bool,
-//             .val_char,
-//             .val_lit,
-//             .val_num,
-//             .val_void,
-//             => expr.basic_var,
-//             // else => @panic("message: []const u8"),
-//         },
-//         .block => |b| {
-//             // _ = b;
-//             if (b.expr) |e| {
-//                 return try self.eval_type_expr(e.*);
-//             } else {
-//                 return .val_void;
-//             }
-//         },
-//         .@"if" => std.debug.panic("unimplemented\n", .{}),
-//         .loop => std.debug.panic("unimplemented\n", .{}),
-//     };
-// }
+pub fn eval_type_expr(self: *Self, expr: Ast.Expr) !Ast.VarType {
+    return switch (expr) {
+        .basic_var => |b| switch (b) {
+            inline .val_bool,
+            .val_char,
+            .val_lit,
+            .val_num,
+            .val_void,
+            => expr.basic_var,
+            // else => @panic("message: []const u8"),
+        },
+        .block => |b| {
+            // _ = b;
+            if (b.expr) |e| {
+                return try self.eval_type_expr(e.*);
+            } else {
+                return .val_void;
+            }
+        },
+        .@"if" => std.debug.panic("unimplemented\n", .{}),
+        .loop => std.debug.panic("unimplemented\n", .{}),
+    };
+}
 
 fn gen_data_section(self: *Self) !void {
     // var str = HeapStr{};
@@ -287,8 +286,7 @@ fn gen_asm_assign_or_reassign(self: *Self, ar: Ast.AssignReassign) anyerror![]co
         .assign => |a| {
             curr_stack.var_ptr += res.size;
             // const a_type = try self.eval_type_expr(a.assign.expr);
-            // const a_type = try self.eval_type_expr(a.assign);
-            const a_type = try types.eval_sys_type_expr(&a.assign);
+            const a_type = try self.eval_type_expr(a.assign);
 
             // const info = var_info{ .is_const = a.@"var".is_const, .ptr_addr = curr_stack.var_ptr, .type = a.assign.expr };
             const info = VarInfo{
