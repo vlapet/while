@@ -60,6 +60,7 @@ pub fn eval_sys_type_expr(compiler: *Compiler, expr: ?*const Ast.Expr) !SysType 
         return switch (n_expr.*) {
             .basic_var => |b| switch (b) {
                 .val_lit => |l| lit: {
+                    std.log.warn("Unfinished pointer assignment in val_lit - setting 0x00", .{});
                     const t_addr = try compiler.alloc.create(SysType);
                     t_addr.* = .Char;
                     break :lit SysType{
