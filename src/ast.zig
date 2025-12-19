@@ -332,6 +332,7 @@ pub fn print_ast(ast: Ast) !void {
         .sys_type => |v| {
             switch (v) {
                 .Char => std.debug.print("CHAR", .{}),
+                .Bool => std.debug.print("BOOL", .{}),
                 .Float => |n| std.debug.print("FLOAT: {}", .{n}),
                 .Function => std.debug.panic("FUNCTION UNIMPLEMENTED", .{}),
                 .Pointer => std.debug.panic("POINTER UNIMPLEMENTED", .{}),

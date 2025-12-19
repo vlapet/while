@@ -250,7 +250,7 @@ pub fn parse_block(ctx: *Context, alloc: std.mem.Allocator) anyerror!Ast.Block {
             break :b Ast.Ast{ .stmt = .{ .@"break" = .{ .expr = expr_res } } };
         },
         .loop => try parse_loop_opt(ctx, alloc, .stmt),
-        // .literal => try parse
+        .literal => try parse_stmt_paramed(ctx, alloc, expr_or_stmt_tok),
         // else => |e| std.debug.panic("UNREACHABLE IN BLOCK: {s}", .{@tagName(e)}),
         else => |e| std.debug.panic("UNREACHABLE IN BLOCK: {s}", .{@tagName(e)}),
     };

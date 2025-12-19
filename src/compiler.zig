@@ -288,7 +288,7 @@ fn gen_asm_assign_or_reassign(self: *Self, ar: Ast.AssignReassign) anyerror![]co
             curr_stack.var_ptr += res.size;
             // const a_type = try self.eval_type_expr(a.assign.expr);
             // const a_type = try self.eval_type_expr(a.assign);
-            const a_type = try types.eval_sys_type_expr(&a.assign);
+            const a_type = try types.eval_sys_type_expr(self, &a.assign);
 
             // const info = var_info{ .is_const = a.@"var".is_const, .ptr_addr = curr_stack.var_ptr, .type = a.assign.expr };
             const info = VarInfo{
