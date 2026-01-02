@@ -469,6 +469,8 @@ fn compiler_test_generic_str(test_str: []const u8, test_name: []const u8) !void 
 
     try f.writeAll(cmp.asm_str.items);
     try run(fpath, alloc);
+    cmp.pretty_print_var_table();
+
     std.log.info("=> finished compiler test: {s}\n", .{test_name});
 }
 
@@ -506,6 +508,29 @@ fn run(fpath: []const u8, alloc: std.mem.Allocator) !void {
     }
 
     // try std.process.Child.init(&.{ "gcc -s -o", abs_path, abs_path, ".o" }, alloc).wait();
+}
+
+fn pretty_print_var_table(self: *const Self) void {
+    std.log.debug("====Var table====\n", .{});
+    for (self.vars.items) |*s| {
+        std.log.debug("stack frame ptr: {}\t", .{s.var_ptr});
+
+        var var_iter = s.vars.iterator();
+
+        while (var_iter.next()) |*entry| {
+            // _ = entry;
+            std.log.debug(
+                "{s}\ttype: {s}\taddr: {}",
+                .{
+                    if (entry.value_ptr.is_const) "CONST" else "VAR",
+                    @tagName(entry.value_ptr.var_type),
+                    entry.value_ptr.ptr_addr,
+                },
+            );
+        }
+        std.log.debug("end stack frame: {}\t", .{s.var_ptr});
+    }
+    std.log.debug("====End Var table====\n", .{});
 }
 
 // const AsmMap = std.StaticStringMap(Token).initComptime();
